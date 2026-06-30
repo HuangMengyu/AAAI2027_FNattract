@@ -1,0 +1,57 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+conda-env/
+.env
+**/*env/
+
+
+# Data
+data/
+data/
+datasets/
+
+# Outputs
+ckpt_saved/
+**/checkpoints**/
+**/checkpoint**/
+data_download_scripts/
+Slurm*/
+Records/
+*.out
+**/Slurm*/
+**/wandb*/
+**/psd_prior_analysis/
+**/log**/
+**/prior_cache/
+# Model weights
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.bin
+*.safetensors
+*.wandb
+
+# Numpy / temporary files
+*.npy
+*.npz
+*.log
+tmp/
+temp/
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Jupyter
+*.ipynb_checkpoints
