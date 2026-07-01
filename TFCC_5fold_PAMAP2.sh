@@ -27,20 +27,20 @@ echo "Running on node: $SLURMD_NODENAME"
 export WANDB_API_KEY='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'
 
 
-export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/KDD2026_TriAFNM:$PYTHONPATH"
+export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 
 # cd /cephyr/users/mengyuh/Alvis/ComparativeStudy/Codes/Codes/Collection
-cd /mimer/NOBACKUP/groups/naiss2025-22-1224/KDD2026_TriAFNM
+cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
-python -u FANTII_SP_extend_prior/main_5fold.py \
+python -u main_5fold.py \
     --dataset_name PAMAP2 \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
     --epochs 10 \
     --warm_epochs adaptive \
     --adaptive_warmup_threshold 0.35 \
-    --model_save_path FANTII_SP_extend_prior/checkpoints/gmm_100iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_PAMAP2 \
+    --model_save_path checkpoints/gmm_100iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_PAMAP2 \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -50,15 +50,13 @@ python -u FANTII_SP_extend_prior/main_5fold.py \
     --prior_mode separate \
     --prior_model gmm \
     --prior_plot False \
-    --prior_require_modality_agreement False \
-    --prior_require_within_modality_agreement False\
     --temporal_binary_mode binary \
     --intra_binary_mode binary \
     --inter_binary_mode binary \
     --prior_gmm_metric cosine \
     --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
-    --prior_save_dir FANTII_SP_extend_prior/prior_cache/PAMAP2_gmm_100iter_concat_cosine_adaptivewarmup \
+    --prior_save_dir prior_cache/PAMAP2_gmm_100iter_concat_cosine_adaptivewarmup \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \

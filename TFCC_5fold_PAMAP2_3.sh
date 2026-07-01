@@ -4,8 +4,8 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=TFCC_multimodal
-#SBATCH --array=1-5
-#SBATCH --output=logs_4/UCI-HAR_total/gmm_200iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_UCI-HAR_total_%A_%a.out
+#SBATCH --array=1-4
+#SBATCH --output=logs_3modality/PAMAP2_3/newmethod_pairwise_50iter_PAMAP2_3_%A_%a.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -19,11 +19,13 @@ source wandb_venv/bin/activate
 
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
+export PYTHONUNBUFFERED=1
 
 echo ${CUDA_VISIBLE_DEVICES}
 echo "Running on node: $SLURMD_NODENAME"
 
 export WANDB_API_KEY='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'
+
 
 export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 
@@ -32,13 +34,14 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
-python main_5fold.py \
-    --dataset_name UCI-HAR_total \
+python -u main_5fold.py \
+    --dataset_name PAMAP2_3 \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
     --epochs 10 \
-    --warm_epochs adaptive \
+    --warm_epochs 2 \
     --adaptive_warmup_threshold 0.35 \
-    --model_save_path checkpoints/gmm_200iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_UCI-HAR_total \
+    --three_mod_contrast pairwise \
+    --model_save_path checkpoints_3modality/newmethod_pairwise_50iter_PAMAP2_3 \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -54,14 +57,21 @@ python main_5fold.py \
     --prior_gmm_metric cosine \
     --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
-    --prior_save_dir prior_cache/UCI-HAR_total_gmm_200iter_concat_cosine_adaptivewarmup \
+    --prior_save_dir prior_cache/PAMAP2_3_pairwise_50 \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
-    --prior_fit_max_iter 200 \
+    --prior_fit_max_iter 50 \
     --prior_segment_len 4
 
 
+
+    # previous optimal setup
+    # --cut_off_uni 1 \
+    # --cut_off_multi 1 \
+    # --attract_filter_uni 0.95 \
+    # --attract_filter_multi 0.95 \
+    # --gamma 0.3 \
 
     

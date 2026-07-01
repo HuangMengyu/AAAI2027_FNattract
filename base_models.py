@@ -15,10 +15,23 @@ def channel_separation(time, dataset_name='SleepEDFx'):
         assert EEG_channels.shape == (2, 3000), "EEG channels should be 2"
         assert EOG_channel.shape == (1, 3000)
         return EEG_channels, EOG_channel
+    elif dataset_name == 'SleepEDFx_3':
+        mod1 = time[:2, :]
+        mod2 = time[2:3, :]
+        mod3 = time[3:4, :]
+        assert mod1.shape == (2, 3000), "SleepEDFx_3 modality 1 should be 2"
+        assert mod2.shape == (1, 3000), "SleepEDFx_3 modality 2 should be 1"
+        assert mod3.shape == (1, 3000), "SleepEDFx_3 modality 3 should be 1"
+        return mod1, mod2, mod3
     elif dataset_name == 'PAMAP2':
         acc_channels = time[:-9, :]
         gyro_channels = time[-9:, :]
         return acc_channels, gyro_channels
+    elif dataset_name == 'PAMAP2_3':
+        mod1 = time[:9, :]
+        mod2 = time[9:18, :]
+        mod3 = time[18:27, :]
+        return mod1, mod2, mod3
     elif dataset_name in ['UCI-HAR', 'UCI-HAR_total']:
         acc_channels = time[:-3, :]
         gyro_channels = time[-3:, :]
@@ -34,23 +47,17 @@ class SSLDataSet(Dataset):
 
     def __getitem__(self, idx):
         time_temp = self.time[idx]
-        mod1_temp, mod2_temp = channel_separation(time_temp, self.dataset_name)
-        mod1_temp = mod1_temp[np.newaxis, ...]
-        mod2_temp = mod2_temp[np.newaxis, ...]
-        mod1_aug_temp = DataTransform_time(mod1_temp)
-        mod2_aug_temp = DataTransform_time(mod2_temp)
+        modalities_temp = channel_separation(time_temp, self.dataset_name)
 
-        mod1_temp = np.squeeze(mod1_temp, axis=0)
-        mod2_temp = np.squeeze(mod2_temp, axis=0)
-        mod1_aug_temp = np.squeeze(mod1_aug_temp, axis=0)
-        mod2_aug_temp = np.squeeze(mod2_aug_temp, axis=0)
+        modalities = []
+        modalities_aug = []
+        for modality_temp in modalities_temp:
+            modality_temp = modality_temp[np.newaxis, ...]
+            modality_aug_temp = DataTransform_time(modality_temp)
+            modalities.append(torch.tensor(np.squeeze(modality_temp, axis=0), dtype=torch.float))
+            modalities_aug.append(torch.tensor(np.squeeze(modality_aug_temp, axis=0), dtype=torch.float))
 
-        mod1 = torch.tensor(mod1_temp, dtype=torch.float)
-        mod2 = torch.tensor(mod2_temp, dtype=torch.float)
-        mod1_aug = torch.tensor(mod1_aug_temp, dtype=torch.float)
-        mod2_aug = torch.tensor(mod2_aug_temp, dtype=torch.float)
-        
-        sample = (mod1, mod2, mod1_aug, mod2_aug, idx)
+        sample = tuple(modalities + modalities_aug + [idx])
 
         return sample
 
@@ -67,11 +74,10 @@ class FTDataSet(Dataset):
 
     def __getitem__(self, index):
         data_temp = self.data[index]
-        mod1_temp, mod2_temp = channel_separation(data_temp, self.dataset_name)
-        mod1 = torch.tensor(mod1_temp, dtype=torch.float)
-        mod2 = torch.tensor(mod2_temp, dtype=torch.float)
+        modalities_temp = channel_separation(data_temp, self.dataset_name)
+        modalities = [torch.tensor(modality_temp, dtype=torch.float) for modality_temp in modalities_temp]
         label = torch.tensor(self.label[index], dtype=torch.long)
-        sample = (mod1, mod2, label)
+        sample = tuple(modalities + [label])
         return sample
 
     def __len__(self):

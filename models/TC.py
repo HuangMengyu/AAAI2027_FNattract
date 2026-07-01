@@ -26,16 +26,6 @@ def prior_segment_distance_matrix(prior_features, segment_idx):
     return prior_pair_value_matrix(prior_features, {"metric": "euclidean"}, segment_idx=segment_idx)
 
 
-def prior_segment_mean_probability_and_vote(prior_features, prior_bmm):
-    segment_probs = []
-    for segment_idx in range(prior_features.shape[1]):
-        segment_probs.append(prior_positive_probability_matrix(prior_features, prior_bmm, segment_idx=segment_idx))
-    segment_probs = torch.stack(segment_probs, dim=0)
-    mean_prob = segment_probs.mean(dim=0)
-    majority_vote = (segment_probs > 0.5).float().mean(dim=0) > 0.5
-    return mean_prob, majority_vote
-
-
 class TC(nn.Module):
     def __init__(self, 
     device,
@@ -74,107 +64,6 @@ class TC(nn.Module):
         z_full = self.seq_transformer(sequence)
         c_full = self.projection_head(z_full)
         return z_full, c_full
-
-    def temporal_decision_summary(
-        self,
-        features_aug1,
-        features_aug2,
-        t_samples,
-        binary_classifier,
-        replace_binary_with_bmm=False,
-        prior_features=None,
-        prior_bmm=None,
-        prior_is_segment=False,
-        agreement_prior_features=None,
-        agreement_prior_bmm=None,
-        prior_require_agreement=False,
-    ):
-        with torch.no_grad():
-            h_aug1 = features_aug1.transpose(1, 2)
-            h_aug2 = features_aug2.transpose(1, 2)
-            seq_len = h_aug1.shape[1]
-            batch = h_aug1.shape[0]
-
-            encode_samples = torch.empty((self.timestep, batch, self.num_channels)).float().to(self.device)
-            for i in np.arange(1, self.timestep + 1):
-                encode_samples[i - 1] = h_aug2[:, t_samples + i, :].view(batch, self.num_channels)
-            forward_seq = h_aug1[:, :t_samples + 1, :]
-            z_t = self.seq_transformer(forward_seq)
-
-            pred = torch.empty((self.timestep, batch, self.num_channels)).float().to(self.device)
-            for i in np.arange(0, self.timestep):
-                pred[i] = self.Wk[i](z_t)
-
-            binary_outputs = []
-            prior_votes = []
-            prior_probs = []
-
-            agreement_prior_prob = None
-            agreement_prior_decision = None
-            if (
-                prior_require_agreement
-                and prior_features is not None
-                and prior_bmm is not None
-                and agreement_prior_features is not None
-                and agreement_prior_bmm is not None
-            ):
-                if prior_is_segment:
-                    primary_agreement_prob, primary_agreement_decision = prior_segment_mean_probability_and_vote(
-                        prior_features,
-                        prior_bmm,
-                    )
-                    secondary_agreement_prob, secondary_agreement_decision = prior_segment_mean_probability_and_vote(
-                        agreement_prior_features,
-                        agreement_prior_bmm,
-                    )
-                else:
-                    primary_agreement_prob = prior_positive_probability_matrix(prior_features, prior_bmm)
-                    secondary_agreement_prob = prior_positive_probability_matrix(agreement_prior_features, agreement_prior_bmm)
-                    primary_agreement_decision = primary_agreement_prob > 0.5
-                    secondary_agreement_decision = secondary_agreement_prob > 0.5
-                agreement_prior_prob = torch.minimum(primary_agreement_prob, secondary_agreement_prob)
-                agreement_prior_decision = primary_agreement_decision & secondary_agreement_decision
-
-            for i in np.arange(0, self.timestep):
-                if replace_binary_with_bmm:
-                    similarity = torch.mm(pred[i], torch.transpose(encode_samples[i], 0, 1))
-                    binary_output = similarity_bmm_probability_matrix(similarity)
-                else:
-                    binary_input = self.make_binary_pair_grid(pred[i], encode_samples[i])
-                    binary_output = torch.sigmoid(binary_classifier(binary_input)).reshape(batch, batch)
-                binary_outputs.append(binary_output)
-
-                if prior_features is not None and prior_bmm is not None:
-                    if prior_is_segment:
-                        prior_seq_num = prior_features.shape[1]
-                        target_pos = int(t_samples.item()) + i + 1
-                        if seq_len > 1:
-                            prior_segment_idx = int(round(target_pos * (prior_seq_num - 1) / (seq_len - 1)))
-                        else:
-                            prior_segment_idx = 0
-                        prior_segment_idx = max(0, min(prior_segment_idx, prior_seq_num - 1))
-                        prior_prob = prior_positive_probability_matrix(
-                            prior_features,
-                            prior_bmm,
-                            segment_idx=prior_segment_idx,
-                        )
-                    else:
-                        prior_prob = prior_positive_probability_matrix(prior_features, prior_bmm)
-                    prior_decision = prior_prob > 0.5
-                    if agreement_prior_decision is not None and agreement_prior_prob is not None:
-                        prior_decision = agreement_prior_decision
-                        prior_prob = agreement_prior_prob
-                    prior_votes.append(prior_decision)
-                    prior_probs.append(prior_prob)
-
-            binary_mean = torch.stack(binary_outputs, dim=0).mean(dim=0)
-            if prior_votes:
-                prior_vote = torch.stack([vote.float() for vote in prior_votes], dim=0).mean(dim=0) > 0.5
-                prior_mean = torch.stack(prior_probs, dim=0).mean(dim=0)
-            else:
-                prior_vote = torch.ones_like(binary_mean, dtype=torch.bool)
-                prior_mean = torch.ones_like(binary_mean)
-            return (binary_mean > 0.5) & prior_vote, torch.minimum(binary_mean, prior_mean)
 
     def form_temporal_binary_loss_data(self, pred, encode_samples):
         pairs = []
@@ -217,7 +106,7 @@ class TC(nn.Module):
         shuffle_idx = torch.randperm(pairs.shape[0], device=self.device)
         return pairs[shuffle_idx], labels[shuffle_idx]
 
-    def forward(self, features_aug1, features_aug2, filter_neg=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, use_fn_mask=True, return_binary_data=False, adaptive_filter_thresholds=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, prior_is_segment=False, labels=None, agreement_prior_features=None, agreement_prior_bmm=None, prior_require_agreement=False, branch_agreement_decision=None, branch_agreement_weight=None, t_samples_override=None, replace_binary_with_bmm=False): # aug1 is used on z level, aug 2 is used on h level
+    def forward(self, features_aug1, features_aug2, filter_neg=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, use_fn_mask=True, return_binary_data=False, adaptive_filter_thresholds=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, prior_is_segment=False, labels=None, external_filter_decision=None, external_filter_weight=None, replace_binary_with_bmm=False): # aug1 is used on z level, aug 2 is used on h level
         h_aug1 = features_aug1  # features are (batch_size, #channels, seq_len)
         seq_len = h_aug1.shape[2]
         h_aug1 = h_aug1.transpose(1, 2)
@@ -226,10 +115,7 @@ class TC(nn.Module):
         h_aug2 = h_aug2.transpose(1, 2)
 
         batch = h_aug1.shape[0]
-        if t_samples_override is None:
-            t_samples = torch.randint(seq_len - self.timestep, size=(1,)).long().to(self.device)  # randomly pick time stamps
-        else:
-            t_samples = t_samples_override.long().to(self.device)
+        t_samples = torch.randint(seq_len - self.timestep, size=(1,)).long().to(self.device)  # randomly pick time stamps
 
         nce = 0  # average over timestep and batch
         encode_samples = torch.empty((self.timestep, batch, self.num_channels)).float().to(self.device)
@@ -248,31 +134,6 @@ class TC(nn.Module):
 
         temporal_binary_outputs = []
         temporal_prior_votes = []
-        agreement_prior_prob = None
-        agreement_prior_decision = None
-        if (
-            prior_require_agreement
-            and prior_features is not None
-            and prior_bmm is not None
-            and agreement_prior_features is not None
-            and agreement_prior_bmm is not None
-        ):
-            if prior_is_segment:
-                primary_agreement_prob, primary_agreement_decision = prior_segment_mean_probability_and_vote(
-                    prior_features,
-                    prior_bmm,
-                )
-                secondary_agreement_prob, secondary_agreement_decision = prior_segment_mean_probability_and_vote(
-                    agreement_prior_features,
-                    agreement_prior_bmm,
-                )
-            else:
-                primary_agreement_prob = prior_positive_probability_matrix(prior_features, prior_bmm)
-                secondary_agreement_prob = prior_positive_probability_matrix(agreement_prior_features, agreement_prior_bmm)
-                primary_agreement_decision = primary_agreement_prob > 0.5
-                secondary_agreement_decision = secondary_agreement_prob > 0.5
-            agreement_prior_prob = torch.minimum(primary_agreement_prob, secondary_agreement_prob)
-            agreement_prior_decision = primary_agreement_decision & secondary_agreement_decision
 
         for i in np.arange(0, self.timestep):  # calculate the temporal loss per each timestep and then take average
             total = torch.mm(pred[i], torch.transpose(encode_samples[i], 0, 1))
@@ -291,7 +152,7 @@ class TC(nn.Module):
                     FN_mask = neg_mask
 
                 # use binary classifier to further filter out false negatives
-                if replace_binary_with_bmm or binary_classifier is not None or branch_agreement_decision is not None:
+                if replace_binary_with_bmm or binary_classifier is not None or external_filter_decision is not None:
                     with torch.no_grad():
                         if replace_binary_with_bmm:
                             binary_output = similarity_bmm_probability_matrix(total)
@@ -300,9 +161,9 @@ class TC(nn.Module):
                             binary_output = torch.sigmoid(binary_classifier(binary_input))
                             binary_output = binary_output.reshape(batch, batch)
                         else:
-                            binary_output = branch_agreement_decision.to(device=self.device, dtype=total.dtype)
-                            if branch_agreement_weight is not None:
-                                binary_output = branch_agreement_weight.to(device=self.device, dtype=total.dtype)
+                            binary_output = external_filter_decision.to(device=self.device, dtype=total.dtype)
+                            if external_filter_weight is not None:
+                                binary_output = external_filter_weight.to(device=self.device, dtype=total.dtype)
                     temporal_binary_outputs.append(binary_output.detach())
                     neg_weight = neg_mask.float()
 
@@ -323,15 +184,12 @@ class TC(nn.Module):
                         else:
                             prior_prob = prior_positive_probability_matrix(prior_features, prior_bmm)
                         prior_decision = prior_prob > 0.5
-                        if agreement_prior_decision is not None and agreement_prior_prob is not None:
-                            prior_decision = agreement_prior_decision
-                            prior_prob = agreement_prior_prob
-                        if branch_agreement_decision is not None:
-                            branch_decision = branch_agreement_decision.to(device=self.device, dtype=torch.bool)
-                            prior_decision = prior_decision & branch_decision
-                            if branch_agreement_weight is not None:
-                                branch_weight = branch_agreement_weight.to(device=self.device, dtype=prior_prob.dtype)
-                                prior_prob = torch.minimum(prior_prob, branch_weight)
+                        if external_filter_decision is not None:
+                            filter_decision = external_filter_decision.to(device=self.device, dtype=torch.bool)
+                            prior_decision = prior_decision & filter_decision
+                            if external_filter_weight is not None:
+                                filter_weight = external_filter_weight.to(device=self.device, dtype=prior_prob.dtype)
+                                prior_prob = torch.minimum(prior_prob, filter_weight)
                         temporal_prior_votes.append(prior_decision.detach())
                         candidate_mask = FN_mask & (binary_output > 0.5)
                         attract_mask = candidate_mask & prior_decision
@@ -394,7 +252,7 @@ class TC(nn.Module):
             else:
                 nce = nce + torch.sum(torch.diag(self.lsoftmax(total)))
 
-        if filter_neg and (replace_binary_with_bmm or binary_classifier is not None or branch_agreement_decision is not None) and labels is not None and temporal_binary_outputs:
+        if filter_neg and (replace_binary_with_bmm or binary_classifier is not None or external_filter_decision is not None) and labels is not None and temporal_binary_outputs:
             diag_mask = torch.eye(batch, dtype=torch.bool, device=self.device)
             binary_mean = torch.stack(temporal_binary_outputs, dim=0).mean(dim=0)
             prior_decision = None

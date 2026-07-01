@@ -88,10 +88,10 @@ def finetuning(fold, model, train_set, valid_set, n_epoch, lr, batch_size, devic
     for _ in pbar:
         for batch_idx, batch in enumerate(train_loader):
             step += 1
-            EEG, EOG, y = tuple(t.to(device) for t in batch)
+            *modalities, y = tuple(t.to(device) for t in batch)
             if y.shape[0] == 1:
                 continue  # skip the batch if only one sample
-            x = (EEG, EOG)
+            x = tuple(modalities)
             pred = model(x)
             loss = loss_func(pred, y)
             optimizer.zero_grad()
@@ -136,8 +136,8 @@ def test(model, dataset, batch_size, multi_label, n_classes = 5):
     # label = []
     with torch.no_grad():
         for batch in testloader:
-            EEG, EOG, y = tuple(t.to(device) for t in batch)
-            x = (EEG, EOG)
+            *modalities, y = tuple(t.to(device) for t in batch)
+            x = tuple(modalities)
             pred = model(x)
             pred = torch.sigmoid(pred) if multi_label else F.softmax(pred, dim=1)
             pred_prob.extend([i.cpu().detach().numpy().tolist() for i in pred])
@@ -166,8 +166,8 @@ def val(model, dataset, batch_size, multi_label, n_classes = 5):
     pred_prob = []
     with torch.no_grad():
         for batch in testloader:
-            EEG, EOG, y = tuple(t.to(device) for t in batch)
-            x = (EEG, EOG)
+            *modalities, y = tuple(t.to(device) for t in batch)
+            x = tuple(modalities)
             pred = model(x)
             pred = torch.sigmoid(pred) if multi_label else F.softmax(pred, dim=1)
             pred_prob.extend([i.cpu().detach().numpy().tolist() for i in pred])
@@ -206,7 +206,7 @@ if __name__ == '__main__':
 
     parser.add_argument("--dim", type=int, default=128)
     parser.add_argument("--in_dim", type=int, default=12)
-    parser.add_argument("--dataset_name", type=str, default='SleepEDFx')
+    parser.add_argument("--dataset_name", type=str, default='SleepEDFx', choices=['SleepEDFx', 'SleepEDFx_3', 'PAMAP2', 'PAMAP2_3', 'UCI-HAR', 'UCI-HAR_total'])
     parser.add_argument("--model_save_path", type=str, default='.')
     parser.add_argument("--current_num_fold", type=int, default=1)
     parser.add_argument("--seeds", nargs='*', type=list, default=[0, 20, 40])
@@ -231,6 +231,7 @@ if __name__ == '__main__':
     parser.add_argument('--temporal_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='temporal branch selector: binary classifier or per-batch BMM')
     parser.add_argument('--intra_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='intra-modal branch selector: binary classifier or per-batch BMM')
     parser.add_argument('--inter_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='inter-modal branch selector: binary classifier or per-batch BMM')
+    parser.add_argument('--three_mod_contrast', type=str, default='pairwise', choices=['pairwise', '1vsall'], help='inter-modality contrast mode for 3-modality inputs')
     parser.add_argument('--use_intra_sample_for_temporal_filter', type=str2bool, default=False, help='whether temporal filtering uses intra-modal sample-level binary/prior decisions instead of temporal segment-level binary/prior decisions')
     parser.add_argument('--use_prior', type=str2bool, default=False, help='whether to use log-RMS magnitude Euclidean-prior mixture filtering')
     parser.add_argument('--prior_mode', type=str, default='combined', choices=['combined', 'separate'], help='whether to fit/use a combined-modality prior or separate modality priors')
@@ -239,8 +240,6 @@ if __name__ == '__main__':
     parser.add_argument('--prior_delta_mode', type=str, default='none', choices=['none', 'delta', 'concat'], help='whether to use log-RMS magnitude only, adjacent log-RMS delta only, or concatenate both as prior features')
     parser.add_argument('--prior_fit_max_iter', type=int, default=200, help='maximum EM iterations for BMM/GMM prior fitting')
     parser.add_argument('--prior_plot', type=str2bool, default=False, help='whether to save distance histogram and fitted prior mixture overlay plots after fitting')
-    parser.add_argument('--prior_require_modality_agreement', type=str2bool, default=False, help='whether separate mod1/mod2 priors must agree before a pair is attracted')
-    parser.add_argument('--prior_require_within_modality_agreement', type=str2bool, default=False, help='whether temporal/intra/inter branch votes within each modality need a 2-of-3 majority before attraction')
     parser.add_argument('--prior_save_dir', type=str, default=None, help='directory for saving/loading magnitude prior artifacts')
     parser.add_argument('--prior_hard_neg_weight', type=parse_prior_hard_neg_weight, default=1.0, help="negative weight for binary-positive pairs rejected by the prior mixture model; use 'auto' for 1 + 0.001 * binary_output * (1 - prior_prob)")
     parser.add_argument('--prior_cancel_weighting', type=str2bool, default=True, help='whether prior cancel pairs use 1 - prior_prob as weight; if false, use weight 1')
@@ -304,6 +303,7 @@ if __name__ == '__main__':
     print("temporal_binary_mode:", opt.temporal_binary_mode)
     print("intra_binary_mode:", opt.intra_binary_mode)
     print("inter_binary_mode:", opt.inter_binary_mode)
+    print("three_mod_contrast:", opt.three_mod_contrast)
     print("use_intra_sample_for_temporal_filter:", opt.use_intra_sample_for_temporal_filter)
     print("use_prior:", opt.use_prior)
     print("prior_mode:", opt.prior_mode)
@@ -312,8 +312,6 @@ if __name__ == '__main__':
     print("prior_delta_mode:", opt.prior_delta_mode)
     print("prior_fit_max_iter:", opt.prior_fit_max_iter)
     print("prior_plot:", opt.prior_plot)
-    print("prior_require_modality_agreement:", opt.prior_require_modality_agreement)
-    print("prior_require_within_modality_agreement:", opt.prior_require_within_modality_agreement)
     print("prior_save_dir:", opt.prior_save_dir)
     print("prior_hard_neg_weight:", opt.prior_hard_neg_weight)
     print("prior_cancel_weighting:", opt.prior_cancel_weighting)
@@ -334,21 +332,33 @@ if __name__ == '__main__':
 
     # set dataset path and current fold
     dataset_name = opt.dataset_name
+    loader_dataset_name = dataset_name.replace('_3', '')
     small_classifier = False
     transformer_depth = 4
-    if dataset_name == 'SleepEDFx':
-        dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/datasets_subject-wise/SleepEDFx/SleepCassette'
+    mod3_dims = None
+    if loader_dataset_name == 'SleepEDFx':
+        if dataset_name == 'SleepEDFx_3':
+            print("Using 3-modality input for SleepEDFx, which includes EEG, EOG and EMG.")
+            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/SleepEDFx/SleepTelemetry_preprocessed'
+            mod1_dims, mod2_dims, mod3_dims = 2, 1, 1
+        else:
+            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/datasets_subject-wise/SleepEDFx/SleepCassette'
+            mod1_dims, mod2_dims = 2, 1
         n_classes = 5
-        mod1_dims, mod2_dims = 2, 1
         time_steps = 50
-        print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims] if dim is not None], "time_steps", time_steps)
-    elif dataset_name == 'PAMAP2':
-        dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_256_overlap128_normalized_9classes'
+        print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims, mod3_dims] if dim is not None], "time_steps", time_steps)
+    elif loader_dataset_name == 'PAMAP2':
+        if dataset_name == 'PAMAP2_3':
+            print("Using 3-modality input for PAMAP2, which includes IMU on hand, IMU on chest and IMU on ankle.")
+            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_processed_3modality'
+            mod1_dims, mod2_dims, mod3_dims = 9, 9, 9
+        else:
+            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_256_overlap128_normalized_9classes'
+            mod1_dims, mod2_dims = 9, 9
         n_classes = 9
-        mod1_dims, mod2_dims = 9, 9
         time_steps = 5 #1
-        print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims] if dim is not None], "time_steps", time_steps)
-    elif dataset_name in ['UCI-HAR', 'UCI-HAR_total']:
+        print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims, mod3_dims] if dim is not None], "time_steps", time_steps)
+    elif loader_dataset_name in ['UCI-HAR', 'UCI-HAR_total']:
         if dataset_name == 'UCI-HAR_total':
             dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/UCI-HAR_total'
         else:
@@ -360,8 +370,8 @@ if __name__ == '__main__':
         print("n_classes:", n_classes, "input_dims", mod1_dims, mod2_dims, "time_steps", time_steps)
     
     print("Dataset path:", dataset_path)
-    effective_prior_center_cosine = bool(opt.prior_center_cosine and dataset_name == 'SleepEDFx')
-    if opt.prior_center_cosine and dataset_name != 'SleepEDFx':
+    effective_prior_center_cosine = bool(opt.prior_center_cosine and loader_dataset_name == 'SleepEDFx')
+    if opt.prior_center_cosine and loader_dataset_name != 'SleepEDFx':
         print(f"prior_center_cosine disabled for dataset {dataset_name}; currently only enabled for SleepEDFx")
     print("prior_center_cosine:", effective_prior_center_cosine)
 
@@ -410,14 +420,16 @@ if __name__ == '__main__':
                 prior_delta_mode=opt.prior_delta_mode,
                 prior_fit_max_iter=opt.prior_fit_max_iter,
                 prior_center_cosine=effective_prior_center_cosine,
+                three_mod_contrast=opt.three_mod_contrast,
                 plot=opt.prior_plot,
             )
             
         # model initialization
-        print("n_classes:", n_classes, "input_dims", mod1_dims, mod2_dims)
+        print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims, mod3_dims] if dim is not None])
         model = tfcc_model(
             mod1_dims=mod1_dims,
             mod2_dims=mod2_dims,
+            mod3_dims=mod3_dims,
             output_dims=opt.output_dims,
             device=device,
             num_class=n_classes,
@@ -448,9 +460,8 @@ if __name__ == '__main__':
             prior_info=prior_info,
             prior_hard_neg_weight=opt.prior_hard_neg_weight,
             prior_cancel_weighting=opt.prior_cancel_weighting,
-            prior_require_modality_agreement=opt.prior_require_modality_agreement,
-            prior_require_within_modality_agreement=opt.prior_require_within_modality_agreement,
             pretrain_labels=pretrain_label,
+            contrast_mode=opt.three_mod_contrast,
         )
         
         if ssl:

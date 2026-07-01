@@ -5,6 +5,7 @@ import torch
 from common_utils.dataset_loader import get_path_loader_new, get_idx
 from sklearn.metrics import roc_auc_score, f1_score, balanced_accuracy_score
 from scipy.stats import t as student_t
+from scipy.stats import wilcoxon
 from base_models import FTDataSet
 import argparse
 from datetime import datetime
@@ -91,6 +92,37 @@ def run_paired_ttest(a_scores, b_scores, alternative="greater"):
     }
 
 
+def run_wilcoxon_signed_rank(a_scores, b_scores, alternative="greater"):
+    a_scores = np.array(a_scores, dtype=float)
+    b_scores = np.array(b_scores, dtype=float)
+    if a_scores.shape != b_scores.shape:
+        raise ValueError(f"Paired scores must have the same shape, got {a_scores.shape} and {b_scores.shape}.")
+
+    if alternative not in ("greater", "less", "two-sided"):
+        raise ValueError(f"Unsupported alternative '{alternative}'. Use 'greater', 'less', or 'two-sided'.")
+
+    valid_mask = np.isfinite(a_scores) & np.isfinite(b_scores)
+    diff = a_scores[valid_mask] - b_scores[valid_mask]
+    nonzero_diff = diff[~np.isclose(diff, 0.0)]
+    n = int(nonzero_diff.size)
+    mean_diff = float(np.mean(diff)) if diff.size else np.nan
+    if n == 0:
+        return {"n": n, "statistic": 0.0, "p": 1.0}
+
+    result = wilcoxon(
+        nonzero_diff,
+        alternative=alternative,
+        zero_method="wilcox",
+        correction=False,
+    )
+    return {
+        "n": n,
+        "statistic": float(result.statistic),
+        "p": float(result.pvalue),
+        "mean_diff": mean_diff,
+    }
+
+
 def multiclass_auc_with_all_classes(y_true, y_score, n_classes=5):
     y_score = np.array(y_score)
     aucs = []
@@ -127,8 +159,8 @@ def test(model, dataset, batch_size, multi_label, device, n_classes=5):
     pred_prob = []
     with torch.no_grad():
         for batch in testloader:
-            EEG, EOG, y = tuple(t.to(device) for t in batch)
-            x = (EEG, EOG)
+            *modalities, y = tuple(t.to(device) for t in batch)
+            x = tuple(modalities)
             pred = model(x)
 
             pred = torch.sigmoid(pred) if multi_label else F.softmax(pred, dim=1)
@@ -234,7 +266,7 @@ def run_pairwise_significance(results_by_checkpoint, alpha=0.05):
         print("Pairwise significance test skipped: at least two checkpoint paths are required.")
         return
 
-    print(f"Pairwise paired t-test results, one-sided alpha={alpha}")
+    print(f"Pairwise paired significance results, one-sided alpha={alpha}")
     for score_level, level_label in [("fold_scores", "seed-fold scores"), ("seed_scores", "seed-mean scores")]:
         print(f"Score level: {level_label}")
         for i in range(len(checkpoint_names)):
@@ -245,17 +277,23 @@ def run_pairwise_significance(results_by_checkpoint, alpha=0.05):
                 for metric in ["auc", "acc", "F1"]:
                     scores_a = results_by_checkpoint[name_a][score_level][metric]
                     scores_b = results_by_checkpoint[name_b][score_level][metric]
-                    test_result = run_paired_ttest(scores_a, scores_b, alternative="greater")
-                    improved = test_result["mean_diff"] > 0
-                    is_significant = bool(improved and np.isfinite(test_result["p"]) and test_result["p"] < alpha)
+                    ttest_result = run_paired_ttest(scores_a, scores_b, alternative="greater")
+                    wilcoxon_result = run_wilcoxon_signed_rank(scores_a, scores_b, alternative="greater")
+                    improved = ttest_result["mean_diff"] > 0
+                    ttest_significant = bool(improved and np.isfinite(ttest_result["p"]) and ttest_result["p"] < alpha)
+                    wilcoxon_significant = bool(improved and np.isfinite(wilcoxon_result["p"]) and wilcoxon_result["p"] < alpha)
                     mean_a = float(np.mean(scores_a))
                     mean_b = float(np.mean(scores_b))
                     print(
-                        f"{name_a} vs {name_b} | {metric} | n={test_result['n']} | "
+                        f"{name_a} vs {name_b} | {metric} | n={ttest_result['n']} | "
                         f"mean_a={mean_a:.4f} | mean_b={mean_b:.4f} | "
-                        f"diff={test_result['mean_diff']:.4f} | "
-                        f"t={test_result['t']:.4f} | p_greater={test_result['p']:.6f} | "
-                        f"significant_improvement={is_significant}"
+                        f"diff={ttest_result['mean_diff']:.4f} | "
+                        f"t={ttest_result['t']:.4f} | t_p_greater={ttest_result['p']:.6f} | "
+                        f"t_significant={ttest_significant} | "
+                        f"wilcoxon_n={wilcoxon_result['n']} | "
+                        f"wilcoxon_W={wilcoxon_result['statistic']:.4f} | "
+                        f"wilcoxon_p_greater={wilcoxon_result['p']:.6f} | "
+                        f"wilcoxon_significant={wilcoxon_significant}"
                     )
                     
 
@@ -288,21 +326,29 @@ def main():
     
     small_classifier = False
     dataset_name = opt.dataset_name
-    if dataset_name == 'SleepEDFx':
-        input_path = "/mimer/NOBACKUP/groups/naiss2025-22-1224/datasets_subject-wise/SleepEDFx/SleepCassette"
+    loader_dataset_name = dataset_name.replace('_3', '')
+    mod3_dims = None
+    if loader_dataset_name == 'SleepEDFx':
+        if dataset_name == 'SleepEDFx_3':
+            input_path = "/mimer/NOBACKUP/groups/naiss2025-22-1224/SleepEDFx/SleepTelemetry_preprocessed"
+            mod1_dims, mod2_dims, mod3_dims = 2, 1, 1
+        else:
+            input_path = "/mimer/NOBACKUP/groups/naiss2025-22-1224/datasets_subject-wise/SleepEDFx/SleepCassette"
+            mod1_dims, mod2_dims = 2, 1
         n_classes = 5
-        mod1_dims = 2
-        mod2_dims = 1
         time_steps = 50
-        print("n_classes:", n_classes, "input_dims", mod1_dims, mod2_dims, "time_steps", time_steps)
-    elif dataset_name == 'PAMAP2':
-        input_path = "/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_256_overlap128_normalized_9classes"
+        print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims, mod3_dims] if dim is not None], "time_steps", time_steps)
+    elif loader_dataset_name == 'PAMAP2':
+        if dataset_name == 'PAMAP2_3':
+            input_path = "/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_processed_3modality"
+            mod1_dims, mod2_dims, mod3_dims = 9, 9, 9
+        else:
+            input_path = "/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_256_overlap128_normalized_9classes"
+            mod1_dims, mod2_dims = 9, 9
         n_classes = 9
-        mod1_dims = 9
-        mod2_dims = 9
-        time_steps = 1
-        print("n_classes:", n_classes, "input_dims", mod1_dims, mod2_dims, "time_steps", time_steps)
-    elif dataset_name in ['UCI-HAR', 'UCI-HAR_total']:
+        time_steps = 5
+        print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims, mod3_dims] if dim is not None], "time_steps", time_steps)
+    elif loader_dataset_name in ['UCI-HAR', 'UCI-HAR_total']:
         if dataset_name == 'UCI-HAR_total':
             input_path = "/mimer/NOBACKUP/groups/naiss2025-22-1224/UCI-HAR_total"
         else:
@@ -310,7 +356,7 @@ def main():
         n_classes = 6
         mod1_dims = 3
         mod2_dims = 3
-        time_steps = 1
+        time_steps = 3
         print("n_classes:", n_classes, "input_dims", mod1_dims, mod2_dims, "time_steps", time_steps)
     
     print("Evaluating Checkpoint paths:")
@@ -318,7 +364,7 @@ def main():
         print(f"  {checkpoint_name}: {checkpoint_path}")
     
 
-    if dataset_name == 'PAMAP2':
+    if dataset_name in ['PAMAP2', 'PAMAP2_3']:
         num_folds = 4
     else:
         num_folds = 5
@@ -329,6 +375,7 @@ def main():
     model = tfcc_model(
             mod1_dims=mod1_dims,
             mod2_dims=mod2_dims,
+            mod3_dims=mod3_dims,
             device=device,
             num_class=n_classes,
             timesteps=time_steps, 

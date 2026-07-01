@@ -22,7 +22,7 @@ def prior_sample_distance_matrix(prior_features):
 
 
 class InfoNCE(nn.Module):
-    def __init__(self, temperature, device, filter=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, use_fn_mask=True, adaptive_filter_thresholds=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, labels=None, agreement_prior_features=None, agreement_prior_bmm=None, prior_require_agreement=False, branch_agreement_decision=None, branch_agreement_weight=None, replace_binary_with_bmm=False):
+    def __init__(self, temperature, device, filter=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, use_fn_mask=True, adaptive_filter_thresholds=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, labels=None, replace_binary_with_bmm=False):
         super(InfoNCE, self).__init__()
         self.device = device
         self.temperature = temperature
@@ -38,11 +38,6 @@ class InfoNCE(nn.Module):
         self.prior_hard_neg_weight = prior_hard_neg_weight
         self.prior_cancel_weighting = prior_cancel_weighting
         self.labels = labels
-        self.agreement_prior_features = agreement_prior_features
-        self.agreement_prior_bmm = agreement_prior_bmm
-        self.prior_require_agreement = prior_require_agreement
-        self.branch_agreement_decision = branch_agreement_decision
-        self.branch_agreement_weight = branch_agreement_weight
         self.replace_binary_with_bmm = replace_binary_with_bmm
         self.tau = temperature # scaling factor for masks
 
@@ -102,24 +97,6 @@ class InfoNCE(nn.Module):
             if self.prior_features is not None and self.prior_bmm is not None:
                 prior_prob = prior_positive_probability_matrix(self.prior_features, self.prior_bmm)
                 prior_decision = prior_prob > 0.5
-                if (
-                    self.prior_require_agreement
-                    and self.agreement_prior_features is not None
-                    and self.agreement_prior_bmm is not None
-                ):
-                    agreement_prior_prob = prior_positive_probability_matrix(
-                        self.agreement_prior_features,
-                        self.agreement_prior_bmm,
-                    )
-                    agreement_prior_decision = agreement_prior_prob > 0.5
-                    prior_decision = prior_decision & agreement_prior_decision
-                    prior_prob = torch.minimum(prior_prob, agreement_prior_prob)
-                if self.branch_agreement_decision is not None:
-                    branch_decision = self.branch_agreement_decision.to(device=self.device, dtype=torch.bool)
-                    prior_decision = prior_decision & branch_decision
-                    if self.branch_agreement_weight is not None:
-                        branch_weight = self.branch_agreement_weight.to(device=self.device, dtype=prior_prob.dtype)
-                        prior_prob = torch.minimum(prior_prob, branch_weight)
                 candidate_mask = FN_mask & (binary_output > 0.5)
                 attract_mask = candidate_mask & prior_decision
                 # hard_neg_mask = candidate_mask & ~attract_mask
@@ -193,7 +170,7 @@ class InfoNCE(nn.Module):
 
         return pos_loss, pos_sim
 
-def loss_ntxent(features, device, filter_neg=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, use_fn_mask=True, adaptive_filter_thresholds=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, labels=None, agreement_prior_features=None, agreement_prior_bmm=None, prior_require_agreement=False, branch_agreement_decision=None, branch_agreement_weight=None, replace_binary_with_bmm=False):
+def loss_ntxent(features, device, filter_neg=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, use_fn_mask=True, adaptive_filter_thresholds=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, labels=None, replace_binary_with_bmm=False):
     fn = InfoNCE(
         temperature=0.2,
         device=device,
@@ -209,12 +186,142 @@ def loss_ntxent(features, device, filter_neg=False, binary_classifier=None, scop
         prior_hard_neg_weight=prior_hard_neg_weight,
         prior_cancel_weighting=prior_cancel_weighting,
         labels=labels,
-        agreement_prior_features=agreement_prior_features,
-        agreement_prior_bmm=agreement_prior_bmm,
-        prior_require_agreement=prior_require_agreement,
-        branch_agreement_decision=branch_agreement_decision,
-        branch_agreement_weight=branch_agreement_weight,
         replace_binary_with_bmm=replace_binary_with_bmm,
     ) # topk: the percentage of each batch to be filtered
     pos_loss, pos_sim = fn(features[0], features[1])
+    return pos_loss, pos_sim
+
+
+def loss_ntxent_anchor_vs_modalities(
+    anchor_feature,
+    positive_features,
+    device,
+    filter_neg=False,
+    branch_configs=None,
+    scope_variable=0,
+    filter_stats=None,
+    use_fn_mask=True,
+    adaptive_filter_thresholds=False,
+    prior_hard_neg_weight=1.0,
+    prior_cancel_weighting=True,
+    labels=None,
+    replace_binary_with_bmm=False,
+    temperature=0.2,
+):
+    anchor_raw = anchor_feature
+    positive_raw = positive_features
+    anchor_feature = F.normalize(anchor_feature, dim=1)
+    positive_features = [F.normalize(feature, dim=1) for feature in positive_features]
+    branch_configs = branch_configs or [{} for _ in positive_features]
+
+    if len(branch_configs) != len(positive_features):
+        raise ValueError(
+            f"Expected one branch config per positive modality, got {len(branch_configs)} "
+            f"configs for {len(positive_features)} positives"
+        )
+
+    batch_size = anchor_feature.shape[0]
+    diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
+    sim_chunks = []
+    pos_weight_chunks = []
+    denom_weight_chunks = []
+    pos_sim_chunks = []
+
+    for branch_idx, (positive_feature, positive_raw_feature, branch_config) in enumerate(
+        zip(positive_features, positive_raw, branch_configs)
+    ):
+        sim_chunk = torch.mm(anchor_feature, positive_feature.t())
+        pos_sim = torch.diag(sim_chunk)
+        pos_sim_chunks.append(pos_sim)
+        neg_mask = ~diag_mask
+
+        pos_weight = diag_mask.float()
+        neg_weight = neg_mask.float()
+
+        if filter_neg and (
+            replace_binary_with_bmm or branch_config.get("binary_classifier") is not None
+        ):
+            if use_fn_mask:
+                pos_neg_sim = torch.mm(positive_feature, positive_feature.t())
+                delta = pos_sim.unsqueeze(1) - torch.minimum(sim_chunk, pos_neg_sim)
+                fn_mask = (delta > -0.1) & (delta < 0.1) & neg_mask
+            else:
+                fn_mask = neg_mask
+
+            with torch.no_grad():
+                if replace_binary_with_bmm:
+                    binary_output = similarity_bmm_probability_matrix(sim_chunk)
+                else:
+                    binary_input = torch.cat((
+                        anchor_raw.unsqueeze(1).expand(-1, batch_size, -1).reshape(-1, anchor_raw.shape[1]),
+                        positive_raw_feature.unsqueeze(0).expand(batch_size, -1, -1).reshape(-1, positive_raw_feature.shape[1]),
+                    ), dim=1)
+                    binary_classifier = branch_config["binary_classifier"]
+                    binary_output = torch.sigmoid(binary_classifier(binary_input)).reshape(batch_size, batch_size)
+
+            prior_features = branch_config.get("prior_features")
+            prior_bmm = branch_config.get("prior_bmm")
+            if prior_features is not None and prior_bmm is not None:
+                prior_prob = prior_positive_probability_matrix(prior_features, prior_bmm)
+                prior_decision = prior_prob > 0.5
+                candidate_mask = fn_mask & (binary_output > 0.5)
+                attract_mask = candidate_mask & prior_decision
+                cancel_mask = fn_mask & ((binary_output < 0.5) & prior_decision)
+                hard_neg_mask = fn_mask & ((binary_output > 0.5) & ~prior_decision)
+                threshold_stats = None
+
+                neg_weight = neg_weight.masked_fill(attract_mask, 0.0)
+                cancel_weight = torch.ones_like(neg_weight) - prior_prob if prior_cancel_weighting else torch.ones_like(neg_weight)
+                neg_weight = torch.where(cancel_mask, cancel_weight, neg_weight)
+                if isinstance(prior_hard_neg_weight, str) and prior_hard_neg_weight.lower() == "auto":
+                    hard_neg_weight = 1.0 - prior_prob
+                else:
+                    hard_neg_weight = torch.full_like(neg_weight, float(prior_hard_neg_weight))
+                neg_weight = torch.where(hard_neg_mask, hard_neg_weight, neg_weight)
+                attract_weight = prior_prob
+            else:
+                prior_prob = None
+                candidate_mask = None
+                hard_neg_mask = None
+                attract_mask, cancel_mask, threshold_stats = build_filter_masks(
+                    fn_mask, binary_output, diag_mask, adaptive_filter_thresholds
+                )
+                neg_weight = neg_weight.masked_fill(attract_mask, 0.0)
+                neg_weight = torch.where(cancel_mask, 1 - binary_output, neg_weight)
+                attract_weight = binary_output
+
+            update_filter_stats(
+                filter_stats,
+                branch_config.get("stats_key", f"inter_anchor_branch_{branch_idx}"),
+                fn_mask,
+                attract_mask,
+                cancel_mask,
+                binary_output,
+                diag_mask,
+                threshold_stats,
+                prior_prob=prior_prob,
+                prior_candidate_mask=candidate_mask,
+                prior_hard_neg_mask=hard_neg_mask,
+            )
+            update_label_agreement_stats(
+                filter_stats,
+                branch_config.get("stats_key", f"inter_anchor_branch_{branch_idx}"),
+                labels,
+                diag_mask,
+                binary_output=binary_output,
+                prior_prob=prior_prob,
+            )
+            pos_weight = diag_mask.float() + attract_mask.float() * attract_weight
+
+        sim_chunks.append(sim_chunk / temperature)
+        pos_weight_chunks.append(pos_weight)
+        denom_weight_chunks.append(pos_weight + neg_weight)
+
+    scaled_sim = torch.cat(sim_chunks, dim=1)
+    pos_weight = torch.cat(pos_weight_chunks, dim=1)
+    denom_weight = torch.cat(denom_weight_chunks, dim=1)
+    log_pos = weighted_logsumexp(scaled_sim, pos_weight, dim=1)
+    log_den = weighted_logsumexp(scaled_sim, denom_weight, dim=1)
+    pos_loss = torch.mean(log_den - log_pos, dim=0)
+    pos_sim = torch.stack(pos_sim_chunks, dim=1).mean(dim=1)
     return pos_loss, pos_sim

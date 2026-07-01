@@ -43,7 +43,7 @@ def get_path_loader(parser): # get the data path and label path for each subject
 def get_idx(parser, path, dataset_name = 'SleepEDFx', valid_ratio=0.2): # path is the list of indexes 
     print("number of subjects: ", len(path))
 
-    if dataset_name == 'PAMAP2':
+    if dataset_name in ['PAMAP2', 'PAMAP2_3']:
         num_val = int(np.round(len(path) * valid_ratio))
     else:
         num_val = int(np.round(len(path) * valid_ratio)) + 1
@@ -59,7 +59,18 @@ def get_idx(parser, path, dataset_name = 'SleepEDFx', valid_ratio=0.2): # path i
             test_idx = ['47', '48', '49', '50', '51', '52', '53', '54', '55', '56', '57', '58', '59', '60', '61', '62']
         elif parser["Fold"] == 5:
             test_idx = ['63', '64', '65', '66', '67', '70', '71', '72', '73', '74', '75', '76', '77', '80', '81', '82']
-    elif dataset_name == 'PAMAP2':
+    elif dataset_name == 'SleepEDFx_3':
+        if parser["Fold"] == 1:
+            test_idx = ['01', '02', '04', '05']
+        elif parser["Fold"] == 2:
+            test_idx = ['06', '07', '08', '09']
+        elif parser["Fold"] == 3:
+            test_idx = ['10', '11', '12', '13']
+        elif parser["Fold"] == 4:
+            test_idx = ['14', '15', '16', '17', '18']
+        elif parser["Fold"] == 5:
+            test_idx = ['19', '20', '21', '22', '24']
+    elif dataset_name in ['PAMAP2', 'PAMAP2_3']:
         # 4 fold cross validation setting
         if parser["Fold"] == 1:
             test_idx = ['101', '102']
@@ -84,12 +95,12 @@ def get_idx(parser, path, dataset_name = 'SleepEDFx', valid_ratio=0.2): # path i
    
 
     idx = sorted(list(set(path) - set(test_idx)))
-    if dataset_name == 'PAMAP2' and '109' in idx:
+    if dataset_name in ['PAMAP2', 'PAMAP2_3'] and '109' in idx:
         idx.remove('109')  # subject 109 has very less data, so we do not use it for validation
     val_idx = list(np.random.choice(idx, num_val , replace=False))
     
     train_idx = [i for i in idx if i not in val_idx]
-    if dataset_name == 'PAMAP2' and '109' not in test_idx and '109' not in val_idx:
+    if dataset_name in ['PAMAP2', 'PAMAP2_3'] and '109' not in test_idx and '109' not in val_idx:
         train_idx.append('109') # put back subject 109 for training
 
 
@@ -108,7 +119,14 @@ def get_path_loader_new(input_path, dataset_name='SleepEDFx'): # get the data pa
                     path.append(f"0{i}")
                 else:
                     path.append(f"{i}")
-    elif dataset_name == 'PAMAP2':
+    elif dataset_name == 'SleepEDFx_3':
+        for i in range(1, 25):
+            if i not in [3, 23]:
+                if i < 10:
+                    path.append(f"0{i}")
+                else:
+                    path.append(f"{i}")
+    elif dataset_name in ['PAMAP2', 'PAMAP2_3']:
         for i in range(101, 110):
             path.append(f"{i}")
     elif dataset_name in ['UCI-HAR', 'UCI-HAR_total']:

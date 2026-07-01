@@ -29,7 +29,9 @@ from models.statistic_prior import (
 
 DATASET_PATHS = {
     "SleepEDFx": "/mimer/NOBACKUP/groups/naiss2025-22-1224/datasets_subject-wise/SleepEDFx/SleepCassette",
+    "SleepEDFx_3": "/mimer/NOBACKUP/groups/naiss2025-22-1224/SleepEDFx/SleepTelemetry_preprocessed",
     "PAMAP2": "/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_256_overlap128_normalized_9classes",
+    "PAMAP2_3": "/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_processed_3modality",
     "UCI-HAR": "/mimer/NOBACKUP/groups/naiss2025-22-1224/UCI-HAR",
     "UCI-HAR_total": "/mimer/NOBACKUP/groups/naiss2025-22-1224/UCI-HAR_total",
 }
@@ -470,7 +472,7 @@ def build_feature_sets(args, train_data):
     feature_groups = {}
 
     if args.feature_type in ["psd", "both"]:
-        mod1_features, mod2_features = extract_prior_features(
+        modality_features = extract_prior_features(
             train_data,
             args.dataset_name,
             segment_len=args.segment_len,
@@ -479,13 +481,15 @@ def build_feature_sets(args, train_data):
             normalize_axis=args.normalize_axis,
         )
         feature_groups["psd"] = {
-            "mod1": mod1_features,
-            "mod2": mod2_features,
-            "combined": np.concatenate([mod1_features, mod2_features], axis=-1),
+            **{
+                f"mod{mod_idx}": features
+                for mod_idx, features in enumerate(modality_features, start=1)
+            },
+            "combined": np.concatenate(modality_features, axis=-1),
         }
 
     if args.feature_type in ["magnitude", "both"]:
-        mod1_features, mod2_features = extract_magnitude_features(
+        modality_features = extract_magnitude_features(
             train_data,
             args.dataset_name,
             segment_len=args.segment_len,
@@ -495,9 +499,11 @@ def build_feature_sets(args, train_data):
             normalize_axis=args.normalize_axis,
         )
         feature_groups["magnitude"] = {
-            "mod1": mod1_features,
-            "mod2": mod2_features,
-            "combined": np.concatenate([mod1_features, mod2_features], axis=-1),
+            **{
+                f"mod{mod_idx}": features
+                for mod_idx, features in enumerate(modality_features, start=1)
+            },
+            "combined": np.concatenate(modality_features, axis=-1),
         }
 
     return feature_groups

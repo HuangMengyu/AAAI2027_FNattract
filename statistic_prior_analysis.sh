@@ -26,11 +26,11 @@ echo "Running on node: $SLURMD_NODENAME"
 export WANDB_API_KEY='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'
 
 
-export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/KDD2026_TriAFNM:$PYTHONPATH"
+export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 
 # cd /cephyr/users/mengyuh/Alvis/ComparativeStudy/Codes/Codes/Collection
-cd /mimer/NOBACKUP/groups/naiss2025-22-1224/KDD2026_TriAFNM
-python3 FANTII_SP_extend_prior/analyze_psd_prior_statistics.py \
+cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
+python3 analyze_psd_prior_statistics.py \
   --dataset_name PAMAP2 \
   --fold 3 \
   --feature_type magnitude \
@@ -38,7 +38,7 @@ python3 FANTII_SP_extend_prior/analyze_psd_prior_statistics.py \
   --magnitude_transform log \
   --normalize_method none \
   --normalize_axis segment \
-  --output_dir FANTII_SP_extend_prior/psd_prior_analysis/PAMAP2_fold3_none_magnitude
+  --output_dir psd_prior_analysis/PAMAP2_fold3_none_magnitude
 
 
     # previous optimal setup

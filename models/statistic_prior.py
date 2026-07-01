@@ -8,10 +8,20 @@ def channel_separation(time, dataset_name='SleepEDFx'):
         EEG_channels = time[:, :-1, :]
         EOG_channel = time[:, -1:, :]
         return EEG_channels, EOG_channel
+    elif dataset_name == 'SleepEDFx_3':
+        mod1 = time[:, :2, :]
+        mod2 = time[:, 2:3, :]
+        mod3 = time[:, 3:4, :]
+        return mod1, mod2, mod3
     elif dataset_name == 'PAMAP2':
         acc_channels = time[:, :-9, :]
         gyro_channels = time[:, -9:, :]
         return acc_channels, gyro_channels
+    elif dataset_name == 'PAMAP2_3':
+        mod1 = time[:, :9, :]
+        mod2 = time[:, 9:18, :]
+        mod3 = time[:, 18:27, :]
+        return mod1, mod2, mod3
     elif dataset_name in ['UCI-HAR', 'UCI-HAR_total']:
         acc_channels = time[:, :-3, :]
         gyro_channels = time[:, -3:, :]
@@ -265,46 +275,44 @@ def save_computed_prior(save_path, prior_dict=None, compressed=True, **prior_arr
     return save_path
 
 def extract_priors(data, dataset_name, segment_len=4, sampling_rate=1.0):
-    mod1_data, mod2_data = channel_separation(data, dataset_name)
+    modality_data = channel_separation(data, dataset_name)
 
     # convert to (batch size, seq_len, channel)
-    mod1_data = np.transpose(mod1_data, (0, 2, 1))
-    mod2_data = np.transpose(mod2_data, (0, 2, 1))
+    modality_data = [np.transpose(data, (0, 2, 1)) for data in modality_data]
 
     # reshape to (batch size, segment_num, segment_len, channel)
-    mod1_data = _segment_modality(mod1_data, segment_len)
-    mod2_data = _segment_modality(mod2_data, segment_len)
+    modality_data = [_segment_modality(data, segment_len) for data in modality_data]
 
     # if PAMAP2: every 3-axis sensor form a group
-    if dataset_name == "PAMAP2":
-        mod1_sensor_num = mod1_data.shape[-1] // 3
-        mod2_sensor_num = mod2_data.shape[-1] // 3
-        mod1_data = _group_pamap2_sensors(mod1_data)
-        mod2_data = _group_pamap2_sensors(mod2_data)
+    sensor_nums = []
+    if dataset_name in ["PAMAP2", "PAMAP2_3"]:
+        sensor_nums = [data.shape[-1] // 3 for data in modality_data]
+        modality_data = [_group_pamap2_sensors(data) for data in modality_data]
     
     # compute the psd for each segment
-    mod1_psd = compute_psd(mod1_data, sampling_rate=sampling_rate)
-    mod2_psd = compute_psd(mod2_data, sampling_rate=sampling_rate)
+    modality_psd = [compute_psd(data, sampling_rate=sampling_rate) for data in modality_data]
 
-    if dataset_name == "PAMAP2":
-        mod1_psd = _ungroup_pamap2_psd(mod1_psd, mod1_sensor_num)
-        mod2_psd = _ungroup_pamap2_psd(mod2_psd, mod2_sensor_num)
+    if dataset_name in ["PAMAP2", "PAMAP2_3"]:
+        modality_psd = [
+            _ungroup_pamap2_psd(psd, sensor_num)
+            for psd, sensor_num in zip(modality_psd, sensor_nums)
+        ]
 
-    return mod1_psd, mod2_psd
+    return tuple(modality_psd)
 
 def extract_magnitude_priors(data, dataset_name, segment_len=4, method="rms"):
-    mod1_data, mod2_data = channel_separation(data, dataset_name)
+    modality_data = channel_separation(data, dataset_name)
 
-    mod1_data = np.transpose(mod1_data, (0, 2, 1))
-    mod2_data = np.transpose(mod2_data, (0, 2, 1))
+    modality_data = [np.transpose(data, (0, 2, 1)) for data in modality_data]
 
-    mod1_data = _segment_modality(mod1_data, segment_len)
-    mod2_data = _segment_modality(mod2_data, segment_len)
+    modality_data = [_segment_modality(data, segment_len) for data in modality_data]
 
-    mod1_magnitude = compute_segment_magnitude(mod1_data, method=method)
-    mod2_magnitude = compute_segment_magnitude(mod2_data, method=method)
+    modality_magnitude = [
+        compute_segment_magnitude(data, method=method)
+        for data in modality_data
+    ]
 
-    return mod1_magnitude, mod2_magnitude
+    return tuple(modality_magnitude)
 
 def extract_prior_features(
     data,
@@ -315,26 +323,23 @@ def extract_prior_features(
     normalize_method="zscore",
     normalize_axis="channel",
 ):
-    mod1_psd, mod2_psd = extract_priors(
+    modality_psd = extract_priors(
         data,
         dataset_name,
         segment_len=segment_len,
         sampling_rate=sampling_rate,
     )
-    mod1_features = log_normalize_psd(
-        mod1_psd,
-        eps=eps,
-        normalize_method=normalize_method,
-        normalize_axis=normalize_axis,
-    )
-    mod2_features = log_normalize_psd(
-        mod2_psd,
-        eps=eps,
-        normalize_method=normalize_method,
-        normalize_axis=normalize_axis,
-    )
+    modality_features = [
+        log_normalize_psd(
+            psd,
+            eps=eps,
+            normalize_method=normalize_method,
+            normalize_axis=normalize_axis,
+        )
+        for psd in modality_psd
+    ]
 
-    return mod1_features, mod2_features
+    return tuple(modality_features)
 
 def extract_magnitude_features(
     data,
@@ -346,25 +351,21 @@ def extract_magnitude_features(
     normalize_method="zscore",
     normalize_axis="channel",
 ):
-    mod1_magnitude, mod2_magnitude = extract_magnitude_priors(
+    modality_magnitude = extract_magnitude_priors(
         data,
         dataset_name,
         segment_len=segment_len,
         method=method,
     )
-    mod1_features = transform_magnitude_features(
-        mod1_magnitude,
-        eps=eps,
-        log_transform=log_transform,
-        normalize_method=normalize_method,
-        normalize_axis=normalize_axis,
-    )
-    mod2_features = transform_magnitude_features(
-        mod2_magnitude,
-        eps=eps,
-        log_transform=log_transform,
-        normalize_method=normalize_method,
-        normalize_axis=normalize_axis,
-    )
+    modality_features = [
+        transform_magnitude_features(
+            magnitude,
+            eps=eps,
+            log_transform=log_transform,
+            normalize_method=normalize_method,
+            normalize_axis=normalize_axis,
+        )
+        for magnitude in modality_magnitude
+    ]
 
-    return mod1_features, mod2_features
+    return tuple(modality_features)

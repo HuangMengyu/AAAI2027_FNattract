@@ -729,6 +729,7 @@ def build_magnitude_prior(
     prior_delta_mode="none",
     prior_fit_max_iter=200,
     prior_center_cosine=False,
+    three_mod_contrast="pairwise",
     plot=False,
     plot_dir=None,
     artifact_stem=None,
@@ -737,13 +738,16 @@ def build_magnitude_prior(
     prior_model = prior_model.lower()
     prior_gmm_metric = prior_gmm_metric.lower()
     prior_delta_mode = prior_delta_mode.lower()
+    three_mod_contrast = three_mod_contrast.lower()
     prior_center_cosine = bool(prior_center_cosine and prior_gmm_metric in ["cosine", "cosine_euclidean"])
     if prior_model == "bmm" and prior_gmm_metric == "cosine_euclidean":
         raise ValueError("BMM prior supports euclidean or cosine; use --prior_model gmm for cosine_euclidean")
     if prior_delta_mode not in ["none", "delta", "concat"]:
         raise ValueError(f"Unsupported prior_delta_mode: {prior_delta_mode}")
+    if three_mod_contrast not in ["pairwise", "1vsall"]:
+        raise ValueError(f"Unsupported three_mod_contrast: {three_mod_contrast}")
     rng = np.random.RandomState(seed)
-    mod1_features, mod2_features = extract_magnitude_features(
+    modality_features = extract_magnitude_features(
         data,
         dataset_name,
         segment_len=segment_len,
@@ -751,11 +755,31 @@ def build_magnitude_prior(
         log_transform=True,
         normalize_method="none",
     )
-    mod1_features = apply_delta_prior_mode(mod1_features, prior_delta_mode)
-    mod2_features = apply_delta_prior_mode(mod2_features, prior_delta_mode)
-    mod1_features = _as_float32(mod1_features)
-    mod2_features = _as_float32(mod2_features)
-    combined_features = _as_float32(np.concatenate((mod1_features, mod2_features), axis=-1))
+    modality_features = [
+        _as_float32(apply_delta_prior_mode(features, prior_delta_mode))
+        for features in modality_features
+    ]
+    combined_features = _as_float32(np.concatenate(modality_features, axis=-1))
+    branch_features = {}
+    if len(modality_features) >= 3:
+        if three_mod_contrast == "pairwise":
+            inter_specs = [
+                (0, 1), (1, 0),
+                (0, 2), (2, 0),
+                (1, 2), (2, 1),
+            ]
+            for left_idx, right_idx in inter_specs:
+                branch_features[f"pair_mod{left_idx + 1}_mod{right_idx + 1}"] = _as_float32(
+                    np.concatenate((modality_features[left_idx], modality_features[right_idx]), axis=-1)
+                )
+        else:
+            for anchor_idx in range(len(modality_features)):
+                for other_idx in range(len(modality_features)):
+                    if anchor_idx == other_idx:
+                        continue
+                    branch_features[f"anchor_mod{anchor_idx + 1}_mod{other_idx + 1}"] = _as_float32(
+                        np.concatenate((modality_features[anchor_idx], modality_features[other_idx]), axis=-1)
+                    )
 
     if prior_mode == "combined":
         feature_sets = [
@@ -763,12 +787,14 @@ def build_magnitude_prior(
             ("combined_segment", combined_features, "segment"),
         ]
     elif prior_mode == "separate":
-        feature_sets = [
-            ("mod1_sample", mod1_features, "sample"),
-            ("mod1_segment", mod1_features, "segment"),
-            ("mod2_sample", mod2_features, "sample"),
-            ("mod2_segment", mod2_features, "segment"),
-        ]
+        feature_sets = []
+        for mod_idx, features in enumerate(modality_features, start=1):
+            feature_sets.extend([
+                (f"mod{mod_idx}_sample", features, "sample"),
+                (f"mod{mod_idx}_segment", features, "segment"),
+            ])
+        for branch_name, features in branch_features.items():
+            feature_sets.append((f"{branch_name}_sample", features, "sample"))
     else:
         raise ValueError(f"Unsupported prior_mode: {prior_mode}")
 
@@ -814,8 +840,14 @@ def build_magnitude_prior(
             print(f"Skipping prior fit plot [{name}] for multidimensional metric={prior_gmm_metric}")
 
     return {
-        "mod1_features": mod1_features,
-        "mod2_features": mod2_features,
+        **{
+            f"mod{mod_idx}_features": features
+            for mod_idx, features in enumerate(modality_features, start=1)
+        },
+        **{
+            f"{branch_name}_features": features
+            for branch_name, features in branch_features.items()
+        },
         "combined_features": combined_features,
         "bmm": bmm,
         "plot_paths": plot_paths,
@@ -834,15 +866,18 @@ def prior_artifact_path(
     prior_delta_mode="none",
     prior_fit_max_iter=200,
     prior_center_cosine=False,
+    three_mod_contrast="pairwise",
 ):
     prior_model = prior_model.lower()
     prior_gmm_metric = prior_gmm_metric.lower()
     prior_delta_mode = prior_delta_mode.lower()
+    three_mod_contrast = three_mod_contrast.lower()
     metric_part = prior_gmm_metric
     center_part = "_centered-cosine" if prior_center_cosine and prior_gmm_metric in ["cosine", "cosine_euclidean"] else ""
+    contrast_part = f"_contrast-{three_mod_contrast}"
     filename = (
         f"magnitude_prior_{prior_mode}_{prior_model}_sample_segment_{metric_part}_"
-        f"delta-{prior_delta_mode}_iter{prior_fit_max_iter}{center_part}_"
+        f"delta-{prior_delta_mode}_iter{prior_fit_max_iter}{center_part}{contrast_part}_"
         f"{dataset_name}_fold{fold}_seed{seed}_seg{segment_len}.npz"
     )
     return os.path.join(save_dir, filename)
@@ -851,11 +886,12 @@ def prior_artifact_path(
 def save_prior_artifact(path, prior, metadata):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     arrays = {
-        "mod1_features": prior["mod1_features"],
-        "mod2_features": prior["mod2_features"],
         "combined_features": prior["combined_features"],
         "metadata_json": np.array(json.dumps(metadata)),
     }
+    for key, value in prior.items():
+        if key.endswith("_features"):
+            arrays[key] = value
     for name, params in prior["bmm"].items():
         arrays[f"{name}_weights"] = params["weights"]
         arrays[f"{name}_means"] = params["means"]
@@ -923,15 +959,18 @@ def load_prior_artifact(path):
             if f"{name}_similarity_max" in loaded:
                 params["similarity_max"] = np.array(loaded[f"{name}_similarity_max"], dtype=np.float32)
         bmm[name] = params
-    return {
-        "mod1_features": loaded["mod1_features"],
-        "mod2_features": loaded["mod2_features"],
+    num_modalities = int(metadata.get("num_modalities", 2))
+    prior = {
         "combined_features": loaded["combined_features"],
         "bmm": bmm,
         "metadata": metadata,
         "path": path,
         "loaded": True,
     }
+    for key in loaded.files:
+        if key.endswith("_features"):
+            prior[key] = loaded[key]
+    return prior
 
 
 def load_or_build_magnitude_prior(
@@ -949,12 +988,14 @@ def load_or_build_magnitude_prior(
     prior_delta_mode="none",
     prior_fit_max_iter=200,
     prior_center_cosine=False,
+    three_mod_contrast="pairwise",
     plot=False,
 ):
     prior_mode = prior_mode.lower()
     prior_model = prior_model.lower()
     prior_gmm_metric = prior_gmm_metric.lower()
     prior_delta_mode = prior_delta_mode.lower()
+    three_mod_contrast = three_mod_contrast.lower()
     prior_center_cosine = bool(prior_center_cosine and prior_gmm_metric in ["cosine", "cosine_euclidean"])
     if prior_model == "bmm" and prior_gmm_metric == "cosine_euclidean":
         raise ValueError("BMM prior supports euclidean or cosine; use --prior_model gmm for cosine_euclidean")
@@ -972,6 +1013,7 @@ def load_or_build_magnitude_prior(
         prior_delta_mode,
         prior_fit_max_iter,
         prior_center_cosine,
+        three_mod_contrast,
     )
     # do not load saved prior
     # if os.path.exists(path):
@@ -993,6 +1035,7 @@ def load_or_build_magnitude_prior(
         prior_delta_mode=prior_delta_mode,
         prior_fit_max_iter=prior_fit_max_iter,
         prior_center_cosine=prior_center_cosine,
+        three_mod_contrast=three_mod_contrast,
         plot=plot,
         plot_dir=save_dir,
         artifact_stem=artifact_stem,
@@ -1003,8 +1046,16 @@ def load_or_build_magnitude_prior(
         prior_feature = "log_rms_delta"
     else:
         prior_feature = "log_rms_magnitude_delta_concat"
+    num_modalities = len([key for key in prior if key.startswith("mod") and key.endswith("_features")])
+    feature_shapes = {
+        key[:-len("_features")]: list(value.shape)
+        for key, value in prior.items()
+        if key.endswith("_features")
+    }
     metadata = {
         "dataset_name": dataset_name,
+        "num_modalities": num_modalities,
+        "three_mod_contrast": three_mod_contrast,
         "fold": fold,
         "seed": seed,
         "segment_len": segment_len,
@@ -1022,11 +1073,7 @@ def load_or_build_magnitude_prior(
         "prior_keys": sorted(prior["bmm"].keys()),
         "prior_level": "sample_segment",
         "plot_paths": prior.get("plot_paths", {}),
-        "feature_shapes": {
-            "mod1": list(prior["mod1_features"].shape),
-            "mod2": list(prior["mod2_features"].shape),
-            "combined": list(prior["combined_features"].shape),
-        },
+        "feature_shapes": feature_shapes,
     }
     save_prior_artifact(path, prior, metadata)
     prior["metadata"] = metadata
@@ -1041,9 +1088,11 @@ def prepare_prior_for_torch(prior):
         return None
     return {
         "features": {
-            "mod1": torch.tensor(prior["mod1_features"], dtype=torch.float32),
-            "mod2": torch.tensor(prior["mod2_features"], dtype=torch.float32),
-            "combined": torch.tensor(prior["combined_features"], dtype=torch.float32),
+            **{
+                key[:-len("_features")]: torch.tensor(value, dtype=torch.float32)
+                for key, value in prior.items()
+                if key.endswith("_features")
+            },
         },
         "bmm": {
             name: bmm_params_to_torch(params)

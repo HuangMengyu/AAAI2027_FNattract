@@ -18,14 +18,14 @@ echo "Running on node: $SLURMD_NODENAME"
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
-export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/KDD2026_TriAFNM:$PYTHONPATH"
+export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 export WANDB_API_KEY='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'
 
 # cd /cephyr/users/mengyuh/Alvis/ComparativeStudy/Codes/Codes/Collection
-cd /mimer/NOBACKUP/groups/naiss2025-22-1224/KDD2026_TriAFNM
+cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 
-python FANTII_SP_extend/test.py \
+python test.py \
     --dataset_name UCI-HAR \
-    --baseline_checkpoint_path /mimer/NOBACKUP/groups/naiss2025-22-1224/KDD2026_TriAFNM/FANTII_SP_extend/checkpoints/baseline_UCI-HAR  \
-    --checkpoint_path /mimer/NOBACKUP/groups/naiss2025-22-1224/KDD2026_TriAFNM/FANTII_SP_extend_prior/checkpoints/gmm_200iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_UCI-HAR  \
+    --baseline_checkpoint_path /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027/checkpoints/baseline_UCI-HAR  \
+    --checkpoint_path /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027/checkpoints/gmm_200iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_UCI-HAR  \
