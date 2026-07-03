@@ -1,0 +1,6 @@
+filter_temporal=True filter_intra=False filter_inter=False
+filter_temporal=False filter_intra=True filter_inter=False
+filter_temporal=False filter_intra=False filter_inter=True
+filter_temporal=True filter_intra=True filter_inter=False
+filter_temporal=False filter_intra=True filter_inter=True
+filter_temporal=True filter_intra=False filter_inter=True

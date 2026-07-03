@@ -225,8 +225,8 @@ if __name__ == '__main__':
     parser.add_argument('--filter_temporal', type=str2bool, default=True, help='whether to apply binary-guided filtering in temporal contrastive losses')
     parser.add_argument('--filter_intra', type=str2bool, default=True, help='whether to apply binary-guided filtering in intra-modal contrastive losses')
     parser.add_argument('--filter_inter', type=str2bool, default=True, help='whether to apply binary-guided filtering in inter-modal contrastive losses')
-    parser.add_argument('--use_fn_mask', type=str2bool, default=True, help='whether to restrict binary-guided filtering to FN_mask; if false, use all non-diagonal negatives')
-    parser.add_argument('--adaptive_filter_thresholds', type=str2bool, default=False, help='whether to use binary mean/std adaptive attract and cancel thresholds')
+    parser.add_argument('--fn_filter_use_binary', type=str2bool, default=True, help='whether binary/BMM scores are used for false-negative attraction')
+    parser.add_argument('--fn_filter_use_prior', type=str2bool, default=True, help='whether magnitude-prior probabilities are used for false-negative attraction when a prior is available')
     parser.add_argument('--replace_binary_with_bmm', type=str2bool, default=False, help='whether to replace neural binary classifiers with per-batch BMMs fitted on all pairwise similarities')
     parser.add_argument('--temporal_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='temporal branch selector: binary classifier or per-batch BMM')
     parser.add_argument('--intra_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='intra-modal branch selector: binary classifier or per-batch BMM')
@@ -297,8 +297,8 @@ if __name__ == '__main__':
     print("filter_temporal:", opt.filter_temporal)
     print("filter_intra:", opt.filter_intra)
     print("filter_inter:", opt.filter_inter)
-    print("use_fn_mask:", opt.use_fn_mask)
-    print("adaptive_filter_thresholds:", opt.adaptive_filter_thresholds)
+    print("fn_filter_use_binary:", opt.fn_filter_use_binary)
+    print("fn_filter_use_prior:", opt.fn_filter_use_prior)
     print("replace_binary_with_bmm:", opt.replace_binary_with_bmm)
     print("temporal_binary_mode:", opt.temporal_binary_mode)
     print("intra_binary_mode:", opt.intra_binary_mode)
@@ -449,8 +449,8 @@ if __name__ == '__main__':
             filter_temporal=opt.filter_temporal,
             filter_intra=opt.filter_intra,
             filter_inter=opt.filter_inter,
-            use_fn_mask=opt.use_fn_mask,
-            adaptive_filter_thresholds=opt.adaptive_filter_thresholds,
+            fn_filter_use_binary=opt.fn_filter_use_binary,
+            fn_filter_use_prior=opt.fn_filter_use_prior,
             replace_binary_with_bmm=opt.replace_binary_with_bmm,
             temporal_binary_mode=opt.temporal_binary_mode,
             intra_binary_mode=opt.intra_binary_mode,

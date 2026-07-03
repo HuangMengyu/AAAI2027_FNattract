@@ -1,0 +1,8 @@
+current_num_fold=1 fn_filter_use_binary=True fn_filter_use_prior=False
+current_num_fold=2 fn_filter_use_binary=True fn_filter_use_prior=False
+current_num_fold=3 fn_filter_use_binary=True fn_filter_use_prior=False
+current_num_fold=4 fn_filter_use_binary=True fn_filter_use_prior=False
+current_num_fold=1 fn_filter_use_binary=False fn_filter_use_prior=True
+current_num_fold=2 fn_filter_use_binary=False fn_filter_use_prior=True
+current_num_fold=3 fn_filter_use_binary=False fn_filter_use_prior=True
+current_num_fold=4 fn_filter_use_binary=False fn_filter_use_prior=True

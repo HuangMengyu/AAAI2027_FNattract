@@ -1075,11 +1075,12 @@ def load_or_build_magnitude_prior(
         "plot_paths": prior.get("plot_paths", {}),
         "feature_shapes": feature_shapes,
     }
-    save_prior_artifact(path, prior, metadata)
+    # do not save prior artifact
+    # save_prior_artifact(path, prior, metadata)
     prior["metadata"] = metadata
     prior["path"] = path
     prior["loaded"] = False
-    print(f"Saved magnitude prior artifact: {path}")
+    # print(f"Saved magnitude prior artifact: {path}")
     return prior
 
 

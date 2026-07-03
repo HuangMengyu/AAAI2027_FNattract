@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 from .attention import Seq_Transformer, Attention
 
-from .filter_stats import build_filter_masks, update_filter_stats, update_label_agreement_stats
+from .filter_stats import update_filter_stats, update_label_agreement_stats
 from .prior_bmm import (
     prior_pair_value_matrix,
     prior_positive_probability_matrix,
@@ -106,7 +106,7 @@ class TC(nn.Module):
         shuffle_idx = torch.randperm(pairs.shape[0], device=self.device)
         return pairs[shuffle_idx], labels[shuffle_idx]
 
-    def forward(self, features_aug1, features_aug2, filter_neg=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, use_fn_mask=True, return_binary_data=False, adaptive_filter_thresholds=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, prior_is_segment=False, labels=None, external_filter_decision=None, external_filter_weight=None, replace_binary_with_bmm=False): # aug1 is used on z level, aug 2 is used on h level
+    def forward(self, features_aug1, features_aug2, filter_neg=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, return_binary_data=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, prior_is_segment=False, labels=None, external_filter_decision=None, external_filter_weight=None, replace_binary_with_bmm=False, fn_filter_use_binary=True, fn_filter_use_prior=True): # aug1 is used on z level, aug 2 is used on h level
         h_aug1 = features_aug1  # features are (batch_size, #channels, seq_len)
         seq_len = h_aug1.shape[2]
         h_aug1 = h_aug1.transpose(1, 2)
@@ -142,32 +142,36 @@ class TC(nn.Module):
                 # S>P: sim(pos_i, neg_j) > sim(anchor_i, neg_j)
                 diag_mask = torch.eye(batch, dtype=torch.bool, device=self.device)
                 neg_mask = ~diag_mask
-                if use_fn_mask:
-                    pos_neg_sim = torch.mm(encode_samples[i], torch.transpose(encode_samples[i], 0, 1))
-                    # Previous FN mask:
-                    # FN_mask = (pos_neg_sim > total) & neg_mask
-                    delta = torch.diag(total).unsqueeze(1) - torch.minimum(total, pos_neg_sim)
-                    FN_mask = (delta > -0.1) & (delta < 0.1) & neg_mask
-                else:
-                    FN_mask = neg_mask
+                FN_mask = neg_mask
 
-                # use binary classifier to further filter out false negatives
-                if replace_binary_with_bmm or binary_classifier is not None or external_filter_decision is not None:
-                    with torch.no_grad():
-                        if replace_binary_with_bmm:
-                            binary_output = similarity_bmm_probability_matrix(total)
-                        elif binary_classifier is not None:
-                            binary_input = self.make_binary_pair_grid(pred[i], encode_samples[i])
-                            binary_output = torch.sigmoid(binary_classifier(binary_input))
-                            binary_output = binary_output.reshape(batch, batch)
-                        else:
-                            binary_output = external_filter_decision.to(device=self.device, dtype=total.dtype)
-                            if external_filter_weight is not None:
-                                binary_output = external_filter_weight.to(device=self.device, dtype=total.dtype)
-                    temporal_binary_outputs.append(binary_output.detach())
+                use_binary_signal = fn_filter_use_binary and (
+                    replace_binary_with_bmm or binary_classifier is not None or external_filter_decision is not None
+                )
+                use_prior_signal = (
+                    fn_filter_use_prior
+                    and prior_features is not None
+                    and prior_bmm is not None
+                )
+
+                # use selected signals to further filter out false negatives
+                if use_binary_signal or use_prior_signal:
+                    binary_output = None
+                    if use_binary_signal:
+                        with torch.no_grad():
+                            if replace_binary_with_bmm:
+                                binary_output = similarity_bmm_probability_matrix(total)
+                            elif binary_classifier is not None:
+                                binary_input = self.make_binary_pair_grid(pred[i], encode_samples[i])
+                                binary_output = torch.sigmoid(binary_classifier(binary_input))
+                                binary_output = binary_output.reshape(batch, batch)
+                            else:
+                                binary_output = external_filter_decision.to(device=self.device, dtype=total.dtype)
+                                if external_filter_weight is not None:
+                                    binary_output = external_filter_weight.to(device=self.device, dtype=total.dtype)
+                        temporal_binary_outputs.append(binary_output.detach())
                     neg_weight = neg_mask.float()
 
-                    if prior_features is not None and prior_bmm is not None:
+                    if use_prior_signal:
                         if prior_is_segment:
                             prior_seq_num = prior_features.shape[1]
                             target_pos = int(t_samples.item()) + i + 1
@@ -184,49 +188,43 @@ class TC(nn.Module):
                         else:
                             prior_prob = prior_positive_probability_matrix(prior_features, prior_bmm)
                         prior_decision = prior_prob > 0.5
-                        if external_filter_decision is not None:
+                        if use_binary_signal and external_filter_decision is not None:
                             filter_decision = external_filter_decision.to(device=self.device, dtype=torch.bool)
                             prior_decision = prior_decision & filter_decision
                             if external_filter_weight is not None:
                                 filter_weight = external_filter_weight.to(device=self.device, dtype=prior_prob.dtype)
                                 prior_prob = torch.minimum(prior_prob, filter_weight)
                         temporal_prior_votes.append(prior_decision.detach())
-                        candidate_mask = FN_mask & (binary_output > 0.5)
-                        attract_mask = candidate_mask & prior_decision
-                        # hard_neg_mask = candidate_mask & ~attract_mask
-                        cancel_mask = FN_mask & ((binary_output < 0.5) & prior_decision)
-                        hard_neg_mask = FN_mask & ((binary_output > 0.5) & ~prior_decision)
-                        threshold_stats = None
-
-                        neg_weight = neg_weight.masked_fill(attract_mask, 0.0)
-                        cancel_weight = torch.ones_like(neg_weight) - prior_prob if prior_cancel_weighting else torch.ones_like(neg_weight)
-                        neg_weight = torch.where(cancel_mask, cancel_weight, neg_weight)
-                        if isinstance(prior_hard_neg_weight, str) and prior_hard_neg_weight.lower() == "auto":
-                            # hard_neg_weight = 1.0 + 0.001 * binary_output * (1.0 - prior_prob)
-                            # hard_neg_weight = 1.0 + 0.0001 * binary_output
-
-                            # downweight the hard neg part
-                            # hard_neg_weight = torch.sqrt(1.0 - prior_prob)
-                            hard_neg_weight = 1 - prior_prob
-                            # hard_neg_weight = 1 - (((binary_output - 0.5) + prior_prob) /2)
-                        else:
-                            hard_neg_weight = torch.full_like(neg_weight, float(prior_hard_neg_weight))
-                        neg_weight = torch.where(
-                            hard_neg_mask,
-                            hard_neg_weight,
-                            neg_weight,
-                        )
                         attract_weight = prior_prob
                     else:
                         prior_prob = None
+                        attract_weight = binary_output
+
+                    if use_binary_signal and use_prior_signal:
+                        candidate_mask = FN_mask & (binary_output > 0.5)
+                        attract_mask = candidate_mask & prior_decision
+                        cancel_mask = FN_mask & ((binary_output < 0.5) & prior_decision)
+                        hard_neg_mask = FN_mask & ((binary_output > 0.5) & ~prior_decision)
+
+                        cancel_weight = torch.ones_like(neg_weight) - prior_prob if prior_cancel_weighting else torch.ones_like(neg_weight)
+                        neg_weight = torch.where(cancel_mask, cancel_weight, neg_weight)
+                        if isinstance(prior_hard_neg_weight, str) and prior_hard_neg_weight.lower() == "auto":
+                            hard_neg_weight = 1 - prior_prob
+                        else:
+                            hard_neg_weight = torch.full_like(neg_weight, float(prior_hard_neg_weight))
+                        neg_weight = torch.where(hard_neg_mask, hard_neg_weight, neg_weight)
+                    elif use_binary_signal:
                         candidate_mask = None
                         hard_neg_mask = None
-                        attract_mask, cancel_mask, threshold_stats = build_filter_masks(
-                            FN_mask, binary_output, diag_mask, adaptive_filter_thresholds
-                        )
-                        neg_weight = neg_weight.masked_fill(attract_mask, 0.0)
-                        neg_weight = torch.where(cancel_mask, 1 - binary_output, neg_weight)
-                        attract_weight = binary_output
+                        attract_mask = FN_mask & (binary_output > 0.5)
+                        cancel_mask = torch.zeros_like(FN_mask)
+                    else:
+                        candidate_mask = FN_mask
+                        hard_neg_mask = torch.zeros_like(FN_mask)
+                        attract_mask = FN_mask & prior_decision
+                        cancel_mask = torch.zeros_like(FN_mask)
+
+                    neg_weight = neg_weight.masked_fill(attract_mask, 0.0)
 
                     update_filter_stats(
                         filter_stats,
@@ -236,7 +234,6 @@ class TC(nn.Module):
                         cancel_mask,
                         binary_output,
                         diag_mask,
-                        threshold_stats,
                         prior_prob=prior_prob,
                         prior_candidate_mask=candidate_mask,
                         prior_hard_neg_mask=hard_neg_mask,
@@ -252,9 +249,9 @@ class TC(nn.Module):
             else:
                 nce = nce + torch.sum(torch.diag(self.lsoftmax(total)))
 
-        if filter_neg and (replace_binary_with_bmm or binary_classifier is not None or external_filter_decision is not None) and labels is not None and temporal_binary_outputs:
+        if filter_neg and labels is not None and (temporal_binary_outputs or temporal_prior_votes):
             diag_mask = torch.eye(batch, dtype=torch.bool, device=self.device)
-            binary_mean = torch.stack(temporal_binary_outputs, dim=0).mean(dim=0)
+            binary_mean = torch.stack(temporal_binary_outputs, dim=0).mean(dim=0) if temporal_binary_outputs else None
             prior_decision = None
             if temporal_prior_votes:
                 prior_vote_fraction = torch.stack([vote.float() for vote in temporal_prior_votes], dim=0).mean(dim=0)

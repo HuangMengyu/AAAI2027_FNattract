@@ -1,0 +1,2 @@
+current_num_fold=1 fn_filter_use_binary=True fn_filter_use_prior=False
+current_num_fold=1 fn_filter_use_binary=False fn_filter_use_prior=True

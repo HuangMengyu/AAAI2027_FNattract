@@ -44,8 +44,6 @@ python -u main_5fold.py \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
-    --use_fn_mask False \
-    --adaptive_filter_thresholds False \
     --use_prior True \
     --prior_mode separate \
     --prior_model gmm \

@@ -1,41 +1,6 @@
 import torch
 
 
-def build_filter_masks(fn_mask, binary_output, diag_mask, adaptive_filter_thresholds=False):
-    non_diag_mask = ~diag_mask
-    probs = binary_output[non_diag_mask].detach()
-    if probs.numel() == 0:
-        binary_mean = binary_output.new_tensor(0.0)
-        binary_std = binary_output.new_tensor(0.0)
-    else:
-        binary_mean = probs.mean()
-        binary_var = torch.clamp((probs * probs).mean() - binary_mean * binary_mean, min=0.0)
-        binary_std = torch.sqrt(binary_var)
-
-    adaptive_attract_threshold = binary_mean + 2.0 * binary_std
-    adaptive_cancel_low = binary_mean - 0.5 * binary_std
-    adaptive_cancel_high = binary_mean + 0.5 * binary_std
-    adaptive_attract_disabled = adaptive_attract_threshold.item() > 1.0
-
-    if adaptive_filter_thresholds:
-        if adaptive_attract_disabled:
-            attract_mask = torch.zeros_like(fn_mask)
-        else:
-            attract_mask = fn_mask & (binary_output > adaptive_attract_threshold)
-        cancel_mask = fn_mask & (binary_output > adaptive_cancel_low) & (binary_output < adaptive_cancel_high)
-    else:
-        attract_mask = fn_mask & (binary_output > 0.9)
-        cancel_mask = fn_mask & ((binary_output > 0.45) & (binary_output < 0.55))
-
-    threshold_stats = {
-        "adaptive_attract_threshold": float(adaptive_attract_threshold.item()),
-        "adaptive_cancel_low": float(adaptive_cancel_low.item()),
-        "adaptive_cancel_high": float(adaptive_cancel_high.item()),
-        "adaptive_attract_disabled": int(adaptive_attract_disabled),
-    }
-    return attract_mask, cancel_mask, threshold_stats
-
-
 def update_filter_stats(
     stats,
     branch,
@@ -44,7 +9,6 @@ def update_filter_stats(
     cancel_mask,
     binary_output,
     diag_mask,
-    threshold_stats=None,
     prior_prob=None,
     prior_candidate_mask=None,
     prior_hard_neg_mask=None,
@@ -58,7 +22,10 @@ def update_filter_stats(
         if num_pairs == 0:
             return
 
-        probs = binary_output[non_diag_mask].detach()
+        if binary_output is None:
+            probs = torch.empty(0, device=diag_mask.device)
+        else:
+            probs = binary_output[non_diag_mask].detach()
         branch_stats = stats.setdefault(branch, {
             "calls": 0,
             "pairs": 0,
@@ -69,12 +36,6 @@ def update_filter_stats(
             "prob_sq_sum": 0.0,
             "gt_09": 0,
             "uncertain_045_055": 0,
-            "adaptive_attract_threshold_sum": 0.0,
-            "adaptive_cancel_low_sum": 0.0,
-            "adaptive_cancel_high_sum": 0.0,
-            "adaptive_attract_disabled": 0,
-            "gt_adaptive_attract": 0,
-            "adaptive_cancel_window": 0,
             "binary_gt_05": 0,
             "prior_candidates": 0,
             "prior_attract": 0,
@@ -90,21 +51,12 @@ def update_filter_stats(
         branch_stats["fn"] += int((fn_mask & non_diag_mask).sum().item())
         branch_stats["attract"] += int((attract_mask & non_diag_mask).sum().item())
         branch_stats["cancel"] += int((cancel_mask & non_diag_mask).sum().item())
-        branch_stats["prob_sum"] += float(probs.sum().item())
-        branch_stats["prob_sq_sum"] += float((probs * probs).sum().item())
-        branch_stats["gt_09"] += int((probs > 0.9).sum().item())
-        branch_stats["binary_gt_05"] += int((probs > 0.5).sum().item())
-        branch_stats["uncertain_045_055"] += int(((probs > 0.45) & (probs < 0.55)).sum().item())
-        if threshold_stats is not None:
-            adaptive_attract_threshold = threshold_stats["adaptive_attract_threshold"]
-            adaptive_cancel_low = threshold_stats["adaptive_cancel_low"]
-            adaptive_cancel_high = threshold_stats["adaptive_cancel_high"]
-            branch_stats["adaptive_attract_threshold_sum"] += adaptive_attract_threshold
-            branch_stats["adaptive_cancel_low_sum"] += adaptive_cancel_low
-            branch_stats["adaptive_cancel_high_sum"] += adaptive_cancel_high
-            branch_stats["adaptive_attract_disabled"] += threshold_stats["adaptive_attract_disabled"]
-            branch_stats["gt_adaptive_attract"] += int((probs > adaptive_attract_threshold).sum().item())
-            branch_stats["adaptive_cancel_window"] += int(((probs > adaptive_cancel_low) & (probs < adaptive_cancel_high)).sum().item())
+        if binary_output is not None:
+            branch_stats["prob_sum"] += float(probs.sum().item())
+            branch_stats["prob_sq_sum"] += float((probs * probs).sum().item())
+            branch_stats["gt_09"] += int((probs > 0.9).sum().item())
+            branch_stats["binary_gt_05"] += int((probs > 0.5).sum().item())
+            branch_stats["uncertain_045_055"] += int(((probs > 0.45) & (probs < 0.55)).sum().item())
         if prior_prob is not None and prior_candidate_mask is not None:
             candidate_mask = prior_candidate_mask & non_diag_mask
             hard_neg_mask = prior_hard_neg_mask & non_diag_mask if prior_hard_neg_mask is not None else torch.zeros_like(candidate_mask)

@@ -91,8 +91,8 @@ class TFCC(nn.Module):
         filter_temporal=True,
         filter_intra=True,
         filter_inter=True,
-        use_fn_mask=True,
-        adaptive_filter_thresholds=False,
+        fn_filter_use_binary=True,
+        fn_filter_use_prior=True,
         use_prior=False,
         prior_info=None,
         prior_hard_neg_weight=1.0,
@@ -234,8 +234,8 @@ class TFCC(nn.Module):
         self.filter_temporal = filter_temporal
         self.filter_intra = filter_intra
         self.filter_inter = filter_inter
-        self.use_fn_mask = use_fn_mask
-        self.adaptive_filter_thresholds = adaptive_filter_thresholds
+        self.fn_filter_use_binary = fn_filter_use_binary
+        self.fn_filter_use_prior = fn_filter_use_prior
         self.use_prior = use_prior and prior_info is not None
         self.prior = prepare_prior_for_torch(prior_info) if self.use_prior else None
         self.prior_mode = self.prior["metadata"].get("prior_mode", "combined") if self.prior is not None else "combined"
@@ -477,9 +477,6 @@ class TFCC(nn.Module):
             prob_var = max(stats["prob_sq_sum"] / pairs - prob_mean ** 2, 0.0)
             prob_std = prob_var ** 0.5
             calls = stats["calls"]
-            adaptive_attract_threshold = stats.get("adaptive_attract_threshold_sum", 0.0) / calls
-            adaptive_cancel_low = stats.get("adaptive_cancel_low_sum", 0.0) / calls
-            adaptive_cancel_high = stats.get("adaptive_cancel_high_sum", 0.0) / calls
             prior_prob_count = stats.get("prior_prob_count", 0)
             prior_extra = ""
             if prior_prob_count > 0:
@@ -537,13 +534,7 @@ class TFCC(nn.Module):
                 f"binary_mean={prob_mean:.4f} | "
                 f"binary_std={prob_std:.4f} | "
                 f"p>0.9={stats['gt_09'] / pairs:.4f} | "
-                f"0.45<p<0.55={stats['uncertain_045_055'] / pairs:.4f} | "
-                f"adapt_attr_thr={adaptive_attract_threshold:.4f} | "
-                f"adapt_attr_disabled={stats.get('adaptive_attract_disabled', 0) / calls:.4f} | "
-                f"p>adapt_attr={stats.get('gt_adaptive_attract', 0) / pairs:.4f} | "
-                f"adapt_cancel_low={adaptive_cancel_low:.4f} | "
-                f"adapt_cancel_high={adaptive_cancel_high:.4f} | "
-                f"adapt_cancel_window={stats.get('adaptive_cancel_window', 0) / pairs:.4f}"
+                f"0.45<p<0.55={stats['uncertain_045_055'] / pairs:.4f}"
                 f"{prior_extra}"
                 f"{label_extra}"
             )
@@ -708,9 +699,9 @@ class TFCC(nn.Module):
                 scope_variable=self.scope_variable,
                 filter_stats=filter_stats,
                 stats_key="temporal",
-                use_fn_mask=self.use_fn_mask,
                 return_binary_data=True,
-                adaptive_filter_thresholds=self.adaptive_filter_thresholds,
+                fn_filter_use_binary=self.fn_filter_use_binary,
+                fn_filter_use_prior=self.fn_filter_use_prior,
                 prior_features=priors[mod_idx],
                 prior_bmm=temporal_prior_bmm,
                 prior_hard_neg_weight=self.prior_hard_neg_weight,
@@ -727,9 +718,9 @@ class TFCC(nn.Module):
                 scope_variable=self.scope_variable,
                 filter_stats=filter_stats,
                 stats_key="temporal",
-                use_fn_mask=self.use_fn_mask,
                 return_binary_data=True,
-                adaptive_filter_thresholds=self.adaptive_filter_thresholds,
+                fn_filter_use_binary=self.fn_filter_use_binary,
+                fn_filter_use_prior=self.fn_filter_use_prior,
                 prior_features=priors[mod_idx],
                 prior_bmm=temporal_prior_bmm,
                 prior_hard_neg_weight=self.prior_hard_neg_weight,
@@ -759,8 +750,8 @@ class TFCC(nn.Module):
                 scope_variable=self.scope_variable,
                 filter_stats=filter_stats,
                 stats_key=f"intra:{mod_key}",
-                use_fn_mask=self.use_fn_mask,
-                adaptive_filter_thresholds=self.adaptive_filter_thresholds,
+                fn_filter_use_binary=self.fn_filter_use_binary,
+                fn_filter_use_prior=self.fn_filter_use_prior,
                 prior_features=priors[mod_idx],
                 prior_bmm=sample_prior_bmms[mod_idx],
                 prior_hard_neg_weight=self.prior_hard_neg_weight,
@@ -802,8 +793,8 @@ class TFCC(nn.Module):
                     scope_variable=self.scope_variable,
                     filter_stats=filter_stats,
                     stats_key=self._stats_key(branch_key),
-                    use_fn_mask=self.use_fn_mask,
-                    adaptive_filter_thresholds=self.adaptive_filter_thresholds,
+                    fn_filter_use_binary=self.fn_filter_use_binary,
+                    fn_filter_use_prior=self.fn_filter_use_prior,
                     prior_features=branch_prior_features,
                     prior_bmm=branch_prior_bmm,
                     prior_hard_neg_weight=self.prior_hard_neg_weight,
@@ -839,8 +830,8 @@ class TFCC(nn.Module):
                     branch_configs=branch_configs,
                     scope_variable=self.scope_variable,
                     filter_stats=filter_stats,
-                    use_fn_mask=self.use_fn_mask,
-                    adaptive_filter_thresholds=self.adaptive_filter_thresholds,
+                    fn_filter_use_binary=self.fn_filter_use_binary,
+                    fn_filter_use_prior=self.fn_filter_use_prior,
                     prior_hard_neg_weight=self.prior_hard_neg_weight,
                     prior_cancel_weighting=self.prior_cancel_weighting,
                     labels=batch_labels,
@@ -901,8 +892,8 @@ class Model(nn.Module):
         filter_temporal=True,
         filter_intra=True,
         filter_inter=True,
-        use_fn_mask=True,
-        adaptive_filter_thresholds=False,
+        fn_filter_use_binary=True,
+        fn_filter_use_prior=True,
         use_prior=False,
         prior_info=None,
         prior_hard_neg_weight=1.0,
@@ -940,8 +931,8 @@ class Model(nn.Module):
             filter_temporal=filter_temporal,
             filter_intra=filter_intra,
             filter_inter=filter_inter,
-            use_fn_mask=use_fn_mask,
-            adaptive_filter_thresholds=adaptive_filter_thresholds,
+            fn_filter_use_binary=fn_filter_use_binary,
+            fn_filter_use_prior=fn_filter_use_prior,
             use_prior=use_prior,
             prior_info=prior_info,
             prior_hard_neg_weight=prior_hard_neg_weight,
