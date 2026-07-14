@@ -1,0 +1,10 @@
+dataset_name,branch,signal,precision,recall,false_attraction_rate,precision_mean,precision_std,recall_mean,recall_std,false_attraction_rate_mean,false_attraction_rate_std,n_runs,epochs_used
+UCI-HAR_total,inter,binary,0.323 +/- 0.005,0.941 +/- 0.016,0.399 +/- 0.010,0.323,0.005,0.941,0.016,0.399,0.010,5,10
+UCI-HAR_total,inter,prior,0.287 +/- 0.001,0.732 +/- 0.006,0.417 +/- 0.004,0.287,0.001,0.732,0.006,0.417,0.004,5,10
+UCI-HAR_total,inter,combined,0.388 +/- 0.005,0.699 +/- 0.012,0.213 +/- 0.006,0.388,0.005,0.699,0.012,0.213,0.006,5,10
+UCI-HAR_total,intra,binary,0.254 +/- 0.003,0.665 +/- 0.016,0.395 +/- 0.011,0.254,0.003,0.665,0.016,0.395,0.011,5,10
+UCI-HAR_total,intra,prior,0.287 +/- 0.001,0.732 +/- 0.006,0.417 +/- 0.004,0.287,0.001,0.732,0.006,0.417,0.004,5,10
+UCI-HAR_total,intra,combined,0.301 +/- 0.002,0.537 +/- 0.017,0.270 +/- 0.007,0.301,0.002,0.537,0.017,0.270,0.007,5,10
+UCI-HAR_total,temporal,binary,0.249 +/- 0.004,0.736 +/- 0.011,0.448 +/- 0.005,0.249,0.004,0.736,0.011,0.448,0.005,5,10
+UCI-HAR_total,temporal,prior,0.231 +/- 0.006,0.736 +/- 0.003,0.493 +/- 0.019,0.231,0.006,0.736,0.003,0.493,0.019,5,10
+UCI-HAR_total,temporal,combined,0.279 +/- 0.006,0.577 +/- 0.010,0.300 +/- 0.004,0.279,0.006,0.577,0.010,0.300,0.004,5,10

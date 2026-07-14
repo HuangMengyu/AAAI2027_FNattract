@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2026-4-117 -p alvis
-#SBATCH -t 09:00:00
+#SBATCH -A NAISS2026-4-351 -p alvis
+#SBATCH -t 08:50:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=branch_ablation_SleepEDFx
-#SBATCH --array=1-30
+#SBATCH --array=7-30
 
 input_file='/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027/branch_ablation_SleepEDFx_UCI-HAR_total.txt'
 # Load parameters safely
@@ -28,33 +28,33 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
-srun --output="logs_branch_ablation/UCI-HAR_total/${filter_temporal}_${filter_intra}_${filter_inter}_SleepEDFx_%A_%a.out" \
+srun --output="logs_branch_ablation/SleepEDFx/4000_4_warmup4_${filter_temporal}_${filter_intra}_${filter_inter}_SleepEDFx_%A_%a.out" \
 python -u main_5fold.py \
     --dataset_name SleepEDFx \
     --current_num_fold ${current_num_fold} \
     --epochs 10 \
-    --warm_epochs 2 \
+    --warm_epochs 4 \
     --adaptive_warmup_threshold 0.35 \
     --filter_temporal ${filter_temporal} \
     --filter_intra ${filter_intra} \
     --filter_inter ${filter_inter} \
-    --model_save_path checkpoints/branch_ablation/${filter_temporal}_${filter_intra}_${filter_inter}_SleepEDFx \
+    --model_save_path checkpoints/branch_ablation/4000_4_warmup4_${filter_temporal}_${filter_intra}_${filter_inter}_SleepEDFx \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
     --use_prior True \
     --prior_mode separate \
     --prior_model gmm \
-    --prior_plot True \
+    --prior_plot False \
     --temporal_binary_mode binary \
     --intra_binary_mode binary \
     --inter_binary_mode binary \
     --prior_gmm_metric cosine \
-    --prior_center_cosine False \
     --use_intra_sample_for_temporal_filter False \
+    --prior_cancel_weighting False \
     --prior_hard_neg_weight 1.0 \
-    --prior_num_random_pairs 10000 \
+    --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
     --prior_fit_max_iter 200 \
-    --prior_segment_len 40 
+    --prior_segment_len 4

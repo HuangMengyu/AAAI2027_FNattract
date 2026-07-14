@@ -24,9 +24,9 @@ export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
-srun --output="logs_binary_prior/test/PAMAP2/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_PAMAP2_%A_%a.out" \
+srun --output="logs_binary_prior/test/PAMAP2_maxiter200/warmup1_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_PAMAP2_%A_%a.out" \
 python test.py \
     --dataset_name PAMAP2 \
     --baseline_checkpoint_path checkpoints_baseline_best/baseline_PAMAP2 \
-    --checkpoint_path checkpoints/binary_prior_ablation/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_PAMAP2 \
+    --checkpoint_path checkpoints/binary_prior_ablation/warmup1_maxiter200_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_PAMAP2 \
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-22-1224 -p alvis
-#SBATCH -t 00:30:00
+#SBATCH -t 00:50:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
-#SBATCH --job-name=TFCC_multimodal
+#SBATCH --job-name=PAMAP2_3
 #SBATCH --array=1-4
-#SBATCH --output=logs_3modality/PAMAP2_3/newmethod_pairwise_50iter_PAMAP2_3_%A_%a.out
+#SBATCH --output=logs_3modality/PAMAP2_3_5seeds/5seeds_baseline_PAMAP2_3_%A_%a.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -38,10 +38,10 @@ python -u main_5fold.py \
     --dataset_name PAMAP2_3 \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
     --epochs 10 \
-    --warm_epochs 2 \
+    --warm_epochs 10 \
     --adaptive_warmup_threshold 0.35 \
     --three_mod_contrast pairwise \
-    --model_save_path checkpoints_3modality/newmethod_pairwise_50iter_PAMAP2_3 \
+    --model_save_path checkpoints_3modality/5seeds_baseline_PAMAP2_3 \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -55,12 +55,11 @@ python -u main_5fold.py \
     --prior_gmm_metric cosine \
     --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
-    --prior_save_dir prior_cache/PAMAP2_3_pairwise_50 \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
-    --prior_fit_max_iter 50 \
+    --prior_fit_max_iter 200 \
     --prior_segment_len 4
 
 

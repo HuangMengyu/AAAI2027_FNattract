@@ -23,20 +23,7 @@ def l2_normalize(features, eps=1e-8):
     return features / (norm + eps)
 
 
-def center_features_for_cosine(features):
-    if features.shape[-1] < 2:
-        return features
-    return features - np.mean(features, axis=-1, keepdims=True)
-
-
-def maybe_center_features_for_cosine(features, center_cosine=False):
-    if center_cosine:
-        return center_features_for_cosine(features)
-    return features
-
-
-def cosine_pair_values(features, left_idx, right_idx, center_cosine=False):
-    features = maybe_center_features_for_cosine(features, center_cosine=center_cosine)
+def cosine_pair_values(features, left_idx, right_idx):
     normalized = l2_normalize(features)
     return np.sum(normalized[left_idx] * normalized[right_idx], axis=-1)
 
@@ -55,24 +42,72 @@ def sample_all_pairs(num_samples, num_pairs, rng):
 
 
 def distance_to_beta_input(distance, distance_scale, eps=1e-6):
-    values = np.asarray(distance, dtype=np.float64) / max(float(distance_scale), eps)
+    distance_scale = np.maximum(np.asarray(distance_scale, dtype=np.float64), eps)
+    values = np.asarray(distance, dtype=np.float64) / distance_scale
     return np.clip(values, eps, 1.0 - eps)
 
 
-def collect_sample_prior_values(features, num_random_pairs, num_self_pairs, rng, metric="euclidean", eps=1e-6, center_cosine=False):
-    flat_features = features.reshape(features.shape[0], -1)
+def _is_dual_prior_features(features):
+    return features.ndim >= 4 and features.shape[-1] == 2
+
+
+def _flatten_dual_features(features):
+    return [
+        features[..., variable_idx].reshape(features.shape[0], -1)
+        for variable_idx in range(features.shape[-1])
+    ]
+
+
+def _dual_euclidean_pair_values(features, left_idx, right_idx):
+    return np.stack(
+        [
+            euclidean_pair_values(variable_features, left_idx, right_idx)
+            for variable_features in _flatten_dual_features(features)
+        ],
+        axis=1,
+    )
+
+
+def _dual_cosine_pair_values(features, left_idx, right_idx):
+    return np.stack(
+        [
+            cosine_pair_values(variable_features, left_idx, right_idx)
+            for variable_features in _flatten_dual_features(features)
+        ],
+        axis=1,
+    )
+
+
+def collect_sample_prior_values(features, num_random_pairs, num_self_pairs, rng, metric="euclidean", eps=1e-6):
     # left, right = sample_offdiag_pairs(flat_features.shape[0], num_random_pairs, rng)
-    left, right = sample_all_pairs(flat_features.shape[0], num_random_pairs, rng)
+    left, right = sample_all_pairs(features.shape[0], num_random_pairs, rng)
+    if _is_dual_prior_features(features):
+        if metric == "cosine_euclidean":
+            raise ValueError("prior_delta_mode='both' supports euclidean or cosine metrics, not cosine_euclidean")
+        random_euclidean = _dual_euclidean_pair_values(features, left, right)
+        distance_scale = np.maximum(np.max(random_euclidean, axis=0), eps).astype(np.float64)
+        if metric == "euclidean":
+            random_values = random_euclidean
+            self_values = np.zeros((num_self_pairs, features.shape[-1]), dtype=np.float64)
+        elif metric == "cosine":
+            random_values = _dual_cosine_pair_values(features, left, right)
+            self_values = np.ones((num_self_pairs, features.shape[-1]), dtype=np.float64)
+        else:
+            raise ValueError(f"Unsupported prior_gmm_metric: {metric}")
+        values = np.concatenate((random_values, self_values), axis=0)
+        return values, distance_scale
+
+    flat_features = features.reshape(features.shape[0], -1)
     random_euclidean = euclidean_pair_values(flat_features, left, right)
     distance_scale = float(max(np.max(random_euclidean), eps))
     if metric == "euclidean":
         random_values = random_euclidean
         self_values = np.zeros(num_self_pairs, dtype=np.float64)
     elif metric == "cosine":
-        random_values = cosine_pair_values(flat_features, left, right, center_cosine=center_cosine)
+        random_values = cosine_pair_values(flat_features, left, right)
         self_values = np.ones(num_self_pairs, dtype=np.float64)
     elif metric == "cosine_euclidean":
-        random_cosine = cosine_pair_values(flat_features, left, right, center_cosine=center_cosine)
+        random_cosine = cosine_pair_values(flat_features, left, right)
         random_values = np.stack((random_cosine, random_euclidean), axis=1)
         self_values = np.tile(np.array([[1.0, 0.0]], dtype=np.float64), (num_self_pairs, 1))
     else:
@@ -81,11 +116,44 @@ def collect_sample_prior_values(features, num_random_pairs, num_self_pairs, rng,
     return values, distance_scale
 
 
-def collect_segment_prior_values(features, num_random_pairs, num_self_pairs, rng, metric="euclidean", eps=1e-6, center_cosine=False):
-    num_samples, seq_num, _ = features.shape
+def collect_segment_prior_values(features, num_random_pairs, num_self_pairs, rng, metric="euclidean", eps=1e-6):
+    num_samples, seq_num = features.shape[:2]
     # left, right = sample_offdiag_pairs(num_samples, num_random_pairs, rng)
     left, right = sample_all_pairs(num_samples, num_random_pairs, rng)
     segment_idx = rng.randint(0, seq_num, size=num_random_pairs)
+    if _is_dual_prior_features(features):
+        if metric == "cosine_euclidean":
+            raise ValueError("prior_delta_mode='both' supports euclidean or cosine metrics, not cosine_euclidean")
+        left_features = features[left, segment_idx]
+        right_features = features[right, segment_idx]
+        random_euclidean = np.stack(
+            [
+                np.linalg.norm(left_features[..., variable_idx] - right_features[..., variable_idx], axis=-1)
+                for variable_idx in range(features.shape[-1])
+            ],
+            axis=1,
+        )
+        distance_scale = np.maximum(np.max(random_euclidean, axis=0), eps).astype(np.float64)
+        if metric == "euclidean":
+            random_values = random_euclidean
+            self_values = np.zeros((num_self_pairs, features.shape[-1]), dtype=np.float64)
+        elif metric == "cosine":
+            random_values = []
+            for variable_idx in range(features.shape[-1]):
+                random_values.append(
+                    np.sum(
+                        l2_normalize(left_features[..., variable_idx])
+                        * l2_normalize(right_features[..., variable_idx]),
+                        axis=-1,
+                    )
+                )
+            random_values = np.stack(random_values, axis=1)
+            self_values = np.ones((num_self_pairs, features.shape[-1]), dtype=np.float64)
+        else:
+            raise ValueError(f"Unsupported prior_gmm_metric: {metric}")
+        values = np.concatenate((random_values, self_values), axis=0)
+        return values, distance_scale
+
     left_features = features[left, segment_idx]
     right_features = features[right, segment_idx]
     random_euclidean = np.linalg.norm(left_features - right_features, axis=-1)
@@ -94,14 +162,10 @@ def collect_segment_prior_values(features, num_random_pairs, num_self_pairs, rng
         random_values = random_euclidean
         self_values = np.zeros(num_self_pairs, dtype=np.float64)
     elif metric == "cosine":
-        left_centered = maybe_center_features_for_cosine(left_features, center_cosine=center_cosine)
-        right_centered = maybe_center_features_for_cosine(right_features, center_cosine=center_cosine)
-        random_values = np.sum(l2_normalize(left_centered) * l2_normalize(right_centered), axis=-1)
+        random_values = np.sum(l2_normalize(left_features) * l2_normalize(right_features), axis=-1)
         self_values = np.ones(num_self_pairs, dtype=np.float64)
     elif metric == "cosine_euclidean":
-        left_centered = maybe_center_features_for_cosine(left_features, center_cosine=center_cosine)
-        right_centered = maybe_center_features_for_cosine(right_features, center_cosine=center_cosine)
-        random_cosine = np.sum(l2_normalize(left_centered) * l2_normalize(right_centered), axis=-1)
+        random_cosine = np.sum(l2_normalize(left_features) * l2_normalize(right_features), axis=-1)
         random_values = np.stack((random_cosine, random_euclidean), axis=1)
         self_values = np.tile(np.array([[1.0, 0.0]], dtype=np.float64), (num_self_pairs, 1))
     else:
@@ -134,33 +198,46 @@ def collect_segment_distances(features, num_random_pairs, num_self_pairs, rng, e
 
 def _log_beta_pdf(values, alpha, beta, eps=1e-12):
     values = np.clip(values, eps, 1.0 - eps)
-    log_norm = math.lgamma(alpha + beta) - math.lgamma(alpha) - math.lgamma(beta)
+    alpha = np.asarray(alpha, dtype=np.float64)
+    beta = np.asarray(beta, dtype=np.float64)
+    lgamma = np.vectorize(math.lgamma)
+    log_norm = lgamma(alpha + beta) - lgamma(alpha) - lgamma(beta)
     return log_norm + (alpha - 1.0) * np.log(values) + (beta - 1.0) * np.log1p(-values)
 
 
 def _weighted_beta_moments(values, weights, eps=1e-6):
     weight_sum = np.sum(weights) + eps
-    mean = np.sum(weights * values) / weight_sum
-    var = np.sum(weights * (values - mean) ** 2) / weight_sum
-    mean = float(np.clip(mean, eps, 1.0 - eps))
+    if values.ndim == 1:
+        weighted_values = weights * values
+        mean = np.sum(weighted_values) / weight_sum
+        var = np.sum(weights * (values - mean) ** 2) / weight_sum
+    else:
+        weighted_values = weights[:, None] * values
+        mean = np.sum(weighted_values, axis=0) / weight_sum
+        var = np.sum(weights[:, None] * (values - mean) ** 2, axis=0) / weight_sum
+    mean = np.clip(mean, eps, 1.0 - eps)
     max_var = mean * (1.0 - mean) - eps
-    var = float(np.clip(var, eps, max_var))
+    var = np.clip(var, eps, max_var)
     concentration = mean * (1.0 - mean) / var - 1.0
-    alpha = max(mean * concentration, eps)
-    beta = max((1.0 - mean) * concentration, eps)
+    alpha = np.maximum(mean * concentration, eps)
+    beta = np.maximum((1.0 - mean) * concentration, eps)
     return alpha, beta
 
 
 def fit_beta_mixture(values, max_iter=200, eps=1e-6):
     values = np.clip(np.asarray(values, dtype=np.float64), eps, 1.0 - eps)
-    median = np.median(values)
-    responsibilities = np.stack((values <= median, values > median), axis=1).astype(np.float64)
+    scalar_input = values.ndim == 1
+    fit_values = values.reshape(-1, 1) if scalar_input else values.reshape(values.shape[0], -1)
+    score = fit_values.mean(axis=1)
+    median = np.median(score)
+    responsibilities = np.stack((score <= median, score > median), axis=1).astype(np.float64)
     responsibilities += eps
     responsibilities /= responsibilities.sum(axis=1, keepdims=True)
 
     weights = np.array([0.5, 0.5], dtype=np.float64)
-    alpha = np.array([2.0, 5.0], dtype=np.float64)
-    beta = np.array([5.0, 2.0], dtype=np.float64)
+    feature_dim = fit_values.shape[1]
+    alpha = np.tile(np.array([[2.0], [5.0]], dtype=np.float64), (1, feature_dim))
+    beta = np.tile(np.array([[5.0], [2.0]], dtype=np.float64), (1, feature_dim))
     previous_ll = -np.inf
     converged = False
     n_iter = 0
@@ -172,7 +249,7 @@ def fit_beta_mixture(values, max_iter=200, eps=1e-6):
 
         for component in range(2):
             alpha[component], beta[component] = _weighted_beta_moments(
-                values,
+                fit_values,
                 responsibilities[:, component],
                 eps=eps,
             )
@@ -180,7 +257,7 @@ def fit_beta_mixture(values, max_iter=200, eps=1e-6):
         log_prob = np.stack(
             [
                 np.log(weights[component] + eps)
-                + _log_beta_pdf(values, alpha[component], beta[component], eps=eps)
+                + np.sum(_log_beta_pdf(fit_values, alpha[component], beta[component], eps=eps), axis=1)
                 for component in range(2)
             ],
             axis=1,
@@ -197,13 +274,24 @@ def fit_beta_mixture(values, max_iter=200, eps=1e-6):
 
     means = alpha / (alpha + beta)
     variances = (alpha * beta) / (((alpha + beta) ** 2) * (alpha + beta + 1.0))
-    high_component = int(np.argmax(means))
+    if scalar_input:
+        alpha_out = alpha.reshape(2)
+        beta_out = beta.reshape(2)
+        means_out = means.reshape(2)
+        variances_out = variances.reshape(2)
+        high_component = int(np.argmax(means_out))
+    else:
+        alpha_out = alpha
+        beta_out = beta
+        means_out = means
+        variances_out = variances
+        high_component = int(np.argmax(means.mean(axis=1)))
     return {
-        "alpha": alpha.astype(np.float32),
-        "beta": beta.astype(np.float32),
+        "alpha": alpha_out.astype(np.float32),
+        "beta": beta_out.astype(np.float32),
         "weights": weights.astype(np.float32),
-        "means": means.astype(np.float32),
-        "variances": variances.astype(np.float32),
+        "means": means_out.astype(np.float32),
+        "variances": variances_out.astype(np.float32),
         "high_component": high_component,
         "positive_component": high_component,
         "converged": converged,
@@ -215,7 +303,8 @@ def fit_beta_mixture(values, max_iter=200, eps=1e-6):
 def fit_distance_beta_mixture(distances, distance_scale, max_iter=100, eps=1e-6):
     values = distance_to_beta_input(distances, distance_scale, eps=eps)
     params = fit_beta_mixture(values, max_iter=max_iter, eps=eps)
-    positive_component = int(np.argmin(params["means"]))
+    means = np.asarray(params["means"], dtype=np.float64).reshape(2, -1)
+    positive_component = int(np.argmin(means.mean(axis=1)))
     params["positive_component"] = positive_component
     params["distance_scale"] = np.array(distance_scale, dtype=np.float32)
     params["metric"] = "euclidean"
@@ -294,12 +383,12 @@ def fit_gaussian_mixture(values, max_iter=200, eps=1e-8):
 
 def _positive_component_for_gmm(params, metric):
     means = np.asarray(params["means"], dtype=np.float64)
+    means_2d = means.reshape(2, -1)
     if metric == "euclidean":
-        return int(np.argmin(means.reshape(2, -1)[:, -1]))
+        return int(np.argmin(means_2d.mean(axis=1)))
     if metric == "cosine":
-        return int(np.argmax(means.reshape(2, -1)[:, 0]))
+        return int(np.argmax(means_2d.mean(axis=1)))
     if metric == "cosine_euclidean":
-        means_2d = means.reshape(2, -1)
         cosine = means_2d[:, 0]
         euclidean = means_2d[:, 1]
         cosine_range = max(float(np.ptp(cosine)), 1e-8)
@@ -327,52 +416,69 @@ def fit_distance_mixture(distances, distance_scale, prior_model, max_iter=200, e
 
 
 def fit_similarity_beta_mixture(similarities, max_iter=200, eps=1e-6):
-    similarities = np.asarray(similarities, dtype=np.float64).reshape(-1)
-    similarities = similarities[np.isfinite(similarities)]
-    if similarities.size == 0:
+    similarities = np.asarray(similarities, dtype=np.float64)
+    scalar_input = similarities.ndim == 1
+    values_for_fit = similarities.reshape(-1, 1) if scalar_input else similarities.reshape(similarities.shape[0], -1)
+    finite_mask = np.all(np.isfinite(values_for_fit), axis=1)
+    values_for_fit = values_for_fit[finite_mask]
+    if values_for_fit.size == 0:
         raise ValueError("No finite similarity values were provided for BMM fitting")
 
-    similarity_min = float(np.min(similarities))
-    similarity_max = float(np.max(similarities))
+    similarity_min = np.min(values_for_fit, axis=0)
+    similarity_max = np.max(values_for_fit, axis=0)
     similarity_range = similarity_max - similarity_min
-    if similarity_range < eps:
-        similarity_scale = 1.0
+    if np.all(similarity_range < eps):
+        similarity_scale = np.ones_like(similarity_range)
         scaled_min = similarity_min - 0.5 * similarity_scale
         return {
-            "alpha": np.array([2.0, 2.0], dtype=np.float32),
-            "beta": np.array([2.0, 2.0], dtype=np.float32),
+            "alpha": np.array([2.0, 2.0], dtype=np.float32) if scalar_input else np.full((2, values_for_fit.shape[1]), 2.0, dtype=np.float32),
+            "beta": np.array([2.0, 2.0], dtype=np.float32) if scalar_input else np.full((2, values_for_fit.shape[1]), 2.0, dtype=np.float32),
             "weights": np.array([0.5, 0.5], dtype=np.float32),
-            "means": np.array([0.5, 0.5], dtype=np.float32),
-            "variances": np.array([0.05, 0.05], dtype=np.float32),
+            "means": np.array([0.5, 0.5], dtype=np.float32) if scalar_input else np.full((2, values_for_fit.shape[1]), 0.5, dtype=np.float32),
+            "variances": np.array([0.05, 0.05], dtype=np.float32) if scalar_input else np.full((2, values_for_fit.shape[1]), 0.05, dtype=np.float32),
             "high_component": 1,
             "positive_component": 1,
             "converged": True,
             "n_iter": 0,
-            "similarity_min": np.array(scaled_min, dtype=np.float32),
-            "similarity_scale": np.array(similarity_scale, dtype=np.float32),
-            "similarity_max": np.array(similarity_max, dtype=np.float32),
+            "similarity_min": np.array(scaled_min.reshape(()) if scalar_input else scaled_min, dtype=np.float32),
+            "similarity_scale": np.array(similarity_scale.reshape(()) if scalar_input else similarity_scale, dtype=np.float32),
+            "similarity_max": np.array(similarity_max.reshape(()) if scalar_input else similarity_max, dtype=np.float32),
             "model_type": "similarity_bmm",
             "metric": "similarity",
         }
     else:
-        similarity_scale = similarity_range
+        similarity_scale = np.maximum(similarity_range, eps)
         scaled_min = similarity_min
-        values = (similarities - scaled_min) / similarity_scale
+        values = (values_for_fit - scaled_min) / similarity_scale
 
     values = np.clip(values, eps, 1.0 - eps)
-    params = fit_beta_mixture(values, max_iter=max_iter, eps=eps)
-    params["positive_component"] = int(np.argmax(params["means"]))
-    params["similarity_min"] = np.array(scaled_min, dtype=np.float32)
-    params["similarity_scale"] = np.array(similarity_scale, dtype=np.float32)
-    params["similarity_max"] = np.array(similarity_max, dtype=np.float32)
+    fit_values = values.reshape(-1) if scalar_input else values
+    params = fit_beta_mixture(fit_values, max_iter=max_iter, eps=eps)
+    means = np.asarray(params["means"], dtype=np.float64).reshape(2, -1)
+    params["positive_component"] = int(np.argmax(means.mean(axis=1)))
+    params["similarity_min"] = np.array(scaled_min.reshape(()) if scalar_input else scaled_min, dtype=np.float32)
+    params["similarity_scale"] = np.array(similarity_scale.reshape(()) if scalar_input else similarity_scale, dtype=np.float32)
+    params["similarity_max"] = np.array(similarity_max.reshape(()) if scalar_input else similarity_max, dtype=np.float32)
     params["model_type"] = "similarity_bmm"
     params["metric"] = "similarity"
     return params
 
 
 def fit_cosine_beta_mixture(similarities, max_iter=200, eps=1e-6):
-    params = fit_similarity_beta_mixture(similarities, max_iter=max_iter, eps=eps)
-    params["model_type"] = "similarity_bmm"
+    similarities = np.asarray(similarities, dtype=np.float64)
+    scalar_input = similarities.ndim == 1
+    values = similarities.reshape(-1, 1) if scalar_input else similarities.reshape(similarities.shape[0], -1)
+    finite_mask = np.all(np.isfinite(values), axis=1)
+    values = values[finite_mask]
+    if values.size == 0:
+        raise ValueError("No finite cosine similarity values were provided for BMM fitting")
+
+    values = np.clip(values, eps, 1.0 - eps)
+    fit_values = values.reshape(-1) if scalar_input else values
+    params = fit_beta_mixture(fit_values, max_iter=max_iter, eps=eps)
+    means = np.asarray(params["means"], dtype=np.float64).reshape(2, -1)
+    params["positive_component"] = int(np.argmax(means.mean(axis=1)))
+    params["model_type"] = "cosine_bmm"
     params["metric"] = "cosine"
     return params
 
@@ -380,7 +486,11 @@ def fit_cosine_beta_mixture(similarities, max_iter=200, eps=1e-6):
 def print_mixture_fit_result(name, params):
     scale_text = ""
     if "distance_scale" in params:
-        scale_text = f" | distance_scale={float(params['distance_scale']):.6f}"
+        scale_value = np.asarray(params["distance_scale"])
+        if scale_value.ndim == 0:
+            scale_text = f" | distance_scale={float(scale_value):.6f}"
+        else:
+            scale_text = f" | distance_scale={scale_value.tolist()}"
     print(
         f"Prior fit [{name}] model={params.get('model_type')} | "
         f"converged={params.get('converged')} | "
@@ -502,6 +612,15 @@ def save_mixture_fit_plot(name, distances, params, plot_dir, artifact_stem, bins
             component_pdf.append(weights[component] * pdf_z / scale)
         mean_lines = means * scale
         x_label = "raw Euclidean distance (BMM fitted on distance / scale)"
+    elif model_type == "cosine_bmm":
+        z = np.clip(x, eps, 1.0 - eps)
+        for component in range(2):
+            alpha = float(params["alpha"][component])
+            beta = float(params["beta"][component])
+            pdf_z = np.exp(_log_beta_pdf(z, alpha, beta, eps=eps))
+            component_pdf.append(weights[component] * pdf_z)
+        mean_lines = means
+        x_label = "cosine similarity (BMM fitted directly)"
     elif model_type == "similarity_bmm":
         similarity_min = float(params["similarity_min"])
         similarity_scale = max(float(params["similarity_scale"]), eps)
@@ -584,6 +703,9 @@ def mixture_positive_distance_responsibility_torch(distance, params, eps=1e-6):
         responsibilities = torch.softmax(log_prob, dim=1)
         return responsibilities[:, positive_component].reshape(output_shape)
 
+    if model_type == "cosine_bmm":
+        return mixture_positive_cosine_bmm_responsibility_torch(distance, params, eps=eps)
+
     if model_type == "similarity_bmm":
         return mixture_positive_similarity_responsibility_torch(distance, params, eps=eps)
 
@@ -594,28 +716,53 @@ def mixture_positive_distance_responsibility_torch(distance, params, eps=1e-6):
     weights = params["weights"].to(device=values.device, dtype=values.dtype)
     positive_component = int(params["positive_component"])
 
-    flat_values = values.reshape(-1, 1)
+    if alpha.ndim == 1:
+        flat_values = values.reshape(-1, 1)
+        output_shape = values.shape
+        alpha = alpha.reshape(2, 1)
+        beta = beta.reshape(2, 1)
+    else:
+        flat_values = values.reshape(-1, alpha.shape[-1])
+        output_shape = values.shape[:-1]
     log_norm = torch.lgamma(alpha + beta) - torch.lgamma(alpha) - torch.lgamma(beta)
     log_prob = (
         torch.log(weights + eps)
-        + log_norm
-        + (alpha - 1.0) * torch.log(flat_values)
-        + (beta - 1.0) * torch.log1p(-flat_values)
+        + (
+            log_norm[None, :, :]
+            + (alpha[None, :, :] - 1.0) * torch.log(flat_values[:, None, :])
+            + (beta[None, :, :] - 1.0) * torch.log1p(-flat_values[:, None, :])
+        ).sum(dim=2)
     )
     responsibilities = torch.softmax(log_prob, dim=1)
-    return responsibilities[:, positive_component].reshape_as(values)
+    return responsibilities[:, positive_component].reshape(output_shape)
 
 
 def prior_pair_value_matrix(prior_features, params, segment_idx=None, eps=1e-8):
     if segment_idx is None:
-        features = prior_features.reshape(prior_features.shape[0], -1)
+        if prior_features.ndim >= 4 and prior_features.shape[-1] == 2:
+            features = prior_features.reshape(prior_features.shape[0], -1, 2)
+        else:
+            features = prior_features.reshape(prior_features.shape[0], -1)
     else:
         features = prior_features[:, segment_idx, :]
     metric = params.get("metric", "euclidean")
+    if features.ndim == 3 and features.shape[-1] == 2:
+        if metric == "cosine_euclidean":
+            raise ValueError("Dual magnitude/delta priors support euclidean or cosine metrics, not cosine_euclidean")
+        values = []
+        for variable_idx in range(features.shape[-1]):
+            variable_features = features[..., variable_idx]
+            if metric == "euclidean":
+                values.append(torch.cdist(variable_features, variable_features, p=2))
+            elif metric == "cosine":
+                normalized = torch.nn.functional.normalize(variable_features, dim=1, eps=eps)
+                values.append(torch.mm(normalized, normalized.t()))
+            else:
+                raise ValueError(f"Unsupported prior metric: {metric}")
+        return torch.stack(values, dim=-1)
+
     if metric == "euclidean":
         return torch.cdist(features, features, p=2)
-    if bool(params.get("center_cosine", False)) and features.shape[1] >= 2:
-        features = features - features.mean(dim=1, keepdim=True)
     normalized = torch.nn.functional.normalize(features, dim=1, eps=eps)
     cosine = torch.mm(normalized, normalized.t())
     if metric == "cosine":
@@ -644,16 +791,53 @@ def mixture_positive_similarity_responsibility_torch(similarity, params, eps=1e-
     weights = params["weights"].to(device=values.device, dtype=values.dtype)
     positive_component = int(params["positive_component"])
 
-    flat_values = values.reshape(-1, 1)
+    if alpha.ndim == 1:
+        flat_values = values.reshape(-1, 1)
+        output_shape = values.shape
+        alpha = alpha.reshape(2, 1)
+        beta = beta.reshape(2, 1)
+    else:
+        flat_values = values.reshape(-1, alpha.shape[-1])
+        output_shape = values.shape[:-1]
     log_norm = torch.lgamma(alpha + beta) - torch.lgamma(alpha) - torch.lgamma(beta)
     log_prob = (
         torch.log(weights + eps)
-        + log_norm
-        + (alpha - 1.0) * torch.log(flat_values)
-        + (beta - 1.0) * torch.log1p(-flat_values)
+        + (
+            log_norm[None, :, :]
+            + (alpha[None, :, :] - 1.0) * torch.log(flat_values[:, None, :])
+            + (beta[None, :, :] - 1.0) * torch.log1p(-flat_values[:, None, :])
+        ).sum(dim=2)
     )
     responsibilities = torch.softmax(log_prob, dim=1)
-    return responsibilities[:, positive_component].reshape_as(values)
+    return responsibilities[:, positive_component].reshape(output_shape)
+
+
+def mixture_positive_cosine_bmm_responsibility_torch(similarity, params, eps=1e-6):
+    values = torch.clamp(similarity, eps, 1.0 - eps)
+    alpha = params["alpha"].to(device=values.device, dtype=values.dtype)
+    beta = params["beta"].to(device=values.device, dtype=values.dtype)
+    weights = params["weights"].to(device=values.device, dtype=values.dtype)
+    positive_component = int(params["positive_component"])
+
+    if alpha.ndim == 1:
+        flat_values = values.reshape(-1, 1)
+        output_shape = values.shape
+        alpha = alpha.reshape(2, 1)
+        beta = beta.reshape(2, 1)
+    else:
+        flat_values = values.reshape(-1, alpha.shape[-1])
+        output_shape = values.shape[:-1]
+    log_norm = torch.lgamma(alpha + beta) - torch.lgamma(alpha) - torch.lgamma(beta)
+    log_prob = (
+        torch.log(weights + eps)
+        + (
+            log_norm[None, :, :]
+            + (alpha[None, :, :] - 1.0) * torch.log(flat_values[:, None, :])
+            + (beta[None, :, :] - 1.0) * torch.log1p(-flat_values[:, None, :])
+        ).sum(dim=2)
+    )
+    responsibilities = torch.softmax(log_prob, dim=1)
+    return responsibilities[:, positive_component].reshape(output_shape)
 
 
 def similarity_bmm_probability_matrix(similarity, max_iter=200, eps=1e-6):
@@ -692,8 +876,6 @@ def bmm_params_to_torch(params):
         torch_params["similarity_max"] = torch.tensor(params["similarity_max"], dtype=torch.float32)
     if "metric" in params:
         torch_params["metric"] = params["metric"]
-    if "center_cosine" in params:
-        torch_params["center_cosine"] = bool(params["center_cosine"])
     return torch_params
 
 
@@ -713,7 +895,15 @@ def apply_delta_prior_mode(features, prior_delta_mode):
         return delta
     if prior_delta_mode == "concat":
         return np.concatenate((features, delta), axis=-1)
+    if prior_delta_mode == "both":
+        return np.stack((features, delta), axis=-1)
     raise ValueError(f"Unsupported prior_delta_mode: {prior_delta_mode}")
+
+
+def concatenate_prior_feature_sets(feature_sets):
+    if feature_sets and _is_dual_prior_features(feature_sets[0]):
+        return np.concatenate(feature_sets, axis=-2)
+    return np.concatenate(feature_sets, axis=-1)
 
 
 def build_magnitude_prior(
@@ -728,7 +918,6 @@ def build_magnitude_prior(
     prior_gmm_metric="euclidean",
     prior_delta_mode="none",
     prior_fit_max_iter=200,
-    prior_center_cosine=False,
     three_mod_contrast="pairwise",
     plot=False,
     plot_dir=None,
@@ -739,10 +928,11 @@ def build_magnitude_prior(
     prior_gmm_metric = prior_gmm_metric.lower()
     prior_delta_mode = prior_delta_mode.lower()
     three_mod_contrast = three_mod_contrast.lower()
-    prior_center_cosine = bool(prior_center_cosine and prior_gmm_metric in ["cosine", "cosine_euclidean"])
     if prior_model == "bmm" and prior_gmm_metric == "cosine_euclidean":
         raise ValueError("BMM prior supports euclidean or cosine; use --prior_model gmm for cosine_euclidean")
-    if prior_delta_mode not in ["none", "delta", "concat"]:
+    if prior_delta_mode == "both" and prior_gmm_metric == "cosine_euclidean":
+        raise ValueError("prior_delta_mode='both' supports euclidean or cosine metrics, not cosine_euclidean")
+    if prior_delta_mode not in ["none", "delta", "concat", "both"]:
         raise ValueError(f"Unsupported prior_delta_mode: {prior_delta_mode}")
     if three_mod_contrast not in ["pairwise", "1vsall"]:
         raise ValueError(f"Unsupported three_mod_contrast: {three_mod_contrast}")
@@ -759,7 +949,7 @@ def build_magnitude_prior(
         _as_float32(apply_delta_prior_mode(features, prior_delta_mode))
         for features in modality_features
     ]
-    combined_features = _as_float32(np.concatenate(modality_features, axis=-1))
+    combined_features = _as_float32(concatenate_prior_feature_sets(modality_features))
     branch_features = {}
     if len(modality_features) >= 3:
         if three_mod_contrast == "pairwise":
@@ -770,7 +960,7 @@ def build_magnitude_prior(
             ]
             for left_idx, right_idx in inter_specs:
                 branch_features[f"pair_mod{left_idx + 1}_mod{right_idx + 1}"] = _as_float32(
-                    np.concatenate((modality_features[left_idx], modality_features[right_idx]), axis=-1)
+                    concatenate_prior_feature_sets((modality_features[left_idx], modality_features[right_idx]))
                 )
         else:
             for anchor_idx in range(len(modality_features)):
@@ -778,7 +968,7 @@ def build_magnitude_prior(
                     if anchor_idx == other_idx:
                         continue
                     branch_features[f"anchor_mod{anchor_idx + 1}_mod{other_idx + 1}"] = _as_float32(
-                        np.concatenate((modality_features[anchor_idx], modality_features[other_idx]), axis=-1)
+                        concatenate_prior_feature_sets((modality_features[anchor_idx], modality_features[other_idx]))
                     )
 
     if prior_mode == "combined":
@@ -808,7 +998,6 @@ def build_magnitude_prior(
                 num_self_pairs,
                 rng,
                 metric=prior_gmm_metric,
-                center_cosine=prior_center_cosine,
             )
         else:
             prior_values, distance_scale = collect_segment_prior_values(
@@ -817,7 +1006,6 @@ def build_magnitude_prior(
                 num_self_pairs,
                 rng,
                 metric=prior_gmm_metric,
-                center_cosine=prior_center_cosine,
             )
         bmm[name] = fit_distance_mixture(
             prior_values,
@@ -826,7 +1014,6 @@ def build_magnitude_prior(
             max_iter=prior_fit_max_iter,
             metric=prior_gmm_metric,
         )
-        bmm[name]["center_cosine"] = prior_center_cosine
         print_mixture_fit_result(name, bmm[name])
         if plot and np.asarray(prior_values).ndim == 1:
             plot_paths[name] = save_mixture_fit_plot(
@@ -865,7 +1052,6 @@ def prior_artifact_path(
     prior_gmm_metric="euclidean",
     prior_delta_mode="none",
     prior_fit_max_iter=200,
-    prior_center_cosine=False,
     three_mod_contrast="pairwise",
 ):
     prior_model = prior_model.lower()
@@ -873,11 +1059,10 @@ def prior_artifact_path(
     prior_delta_mode = prior_delta_mode.lower()
     three_mod_contrast = three_mod_contrast.lower()
     metric_part = prior_gmm_metric
-    center_part = "_centered-cosine" if prior_center_cosine and prior_gmm_metric in ["cosine", "cosine_euclidean"] else ""
     contrast_part = f"_contrast-{three_mod_contrast}"
     filename = (
         f"magnitude_prior_{prior_mode}_{prior_model}_sample_segment_{metric_part}_"
-        f"delta-{prior_delta_mode}_iter{prior_fit_max_iter}{center_part}{contrast_part}_"
+        f"delta-{prior_delta_mode}_iter{prior_fit_max_iter}{contrast_part}_"
         f"{dataset_name}_fold{fold}_seed{seed}_seg{segment_len}.npz"
     )
     return os.path.join(save_dir, filename)
@@ -900,7 +1085,6 @@ def save_prior_artifact(path, prior, metadata):
         arrays[f"{name}_converged"] = np.array(params.get("converged", False), dtype=np.bool_)
         arrays[f"{name}_n_iter"] = np.array(params.get("n_iter", 0), dtype=np.int64)
         arrays[f"{name}_model_type"] = np.array(params.get("model_type", metadata.get("prior_model", "bmm")))
-        arrays[f"{name}_center_cosine"] = np.array(params.get("center_cosine", metadata.get("prior_center_cosine", False)), dtype=np.bool_)
         if "alpha" in params:
             arrays[f"{name}_alpha"] = params["alpha"]
         if "beta" in params:
@@ -932,7 +1116,7 @@ def load_prior_artifact(path):
         if model_type_key in loaded:
             model_type = str(loaded[model_type_key])
         elif prior_model == "bmm" and prior_metric == "cosine":
-            model_type = "similarity_bmm"
+            model_type = "cosine_bmm"
         params = {
             "weights": loaded[f"{name}_weights"],
             "means": loaded[f"{name}_means"],
@@ -942,7 +1126,6 @@ def load_prior_artifact(path):
             "n_iter": int(loaded[f"{name}_n_iter"]),
             "model_type": model_type,
             "metric": prior_metric,
-            "center_cosine": bool(loaded[f"{name}_center_cosine"]) if f"{name}_center_cosine" in loaded else bool(metadata.get("prior_center_cosine", False)),
         }
         if prior_model == "bmm":
             params.update({
@@ -987,7 +1170,6 @@ def load_or_build_magnitude_prior(
     prior_gmm_metric="euclidean",
     prior_delta_mode="none",
     prior_fit_max_iter=200,
-    prior_center_cosine=False,
     three_mod_contrast="pairwise",
     plot=False,
 ):
@@ -996,10 +1178,11 @@ def load_or_build_magnitude_prior(
     prior_gmm_metric = prior_gmm_metric.lower()
     prior_delta_mode = prior_delta_mode.lower()
     three_mod_contrast = three_mod_contrast.lower()
-    prior_center_cosine = bool(prior_center_cosine and prior_gmm_metric in ["cosine", "cosine_euclidean"])
     if prior_model == "bmm" and prior_gmm_metric == "cosine_euclidean":
         raise ValueError("BMM prior supports euclidean or cosine; use --prior_model gmm for cosine_euclidean")
-    if prior_delta_mode not in ["none", "delta", "concat"]:
+    if prior_delta_mode == "both" and prior_gmm_metric == "cosine_euclidean":
+        raise ValueError("prior_delta_mode='both' supports euclidean or cosine metrics, not cosine_euclidean")
+    if prior_delta_mode not in ["none", "delta", "concat", "both"]:
         raise ValueError(f"Unsupported prior_delta_mode: {prior_delta_mode}")
     path = prior_artifact_path(
         save_dir,
@@ -1012,7 +1195,6 @@ def load_or_build_magnitude_prior(
         prior_gmm_metric,
         prior_delta_mode,
         prior_fit_max_iter,
-        prior_center_cosine,
         three_mod_contrast,
     )
     # do not load saved prior
@@ -1034,7 +1216,6 @@ def load_or_build_magnitude_prior(
         prior_gmm_metric=prior_gmm_metric,
         prior_delta_mode=prior_delta_mode,
         prior_fit_max_iter=prior_fit_max_iter,
-        prior_center_cosine=prior_center_cosine,
         three_mod_contrast=three_mod_contrast,
         plot=plot,
         plot_dir=save_dir,
@@ -1044,6 +1225,8 @@ def load_or_build_magnitude_prior(
         prior_feature = "log_rms_magnitude"
     elif prior_delta_mode == "delta":
         prior_feature = "log_rms_delta"
+    elif prior_delta_mode == "both":
+        prior_feature = "log_rms_magnitude_and_delta_separate"
     else:
         prior_feature = "log_rms_magnitude_delta_concat"
     num_modalities = len([key for key in prior if key.startswith("mod") and key.endswith("_features")])
@@ -1067,7 +1250,6 @@ def load_or_build_magnitude_prior(
         "normalization": "none",
         "metric": prior_gmm_metric,
         "prior_gmm_metric": prior_gmm_metric,
-        "prior_center_cosine": prior_center_cosine,
         "prior_mode": prior_mode,
         "prior_model": prior_model,
         "prior_keys": sorted(prior["bmm"].keys()),

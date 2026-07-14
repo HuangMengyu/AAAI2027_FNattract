@@ -28,16 +28,16 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
-srun --output="logs_binary_prior/PAMAP2/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_PAMAP2_%A_%a.out" \
+srun --output="logs_binary_prior/PAMAP2_maxiter200/warmup1_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_PAMAP2_%A_%a.out" \
 python -u main_5fold.py \
     --dataset_name PAMAP2 \
     --current_num_fold ${current_num_fold} \
     --epochs 10 \
-    --warm_epochs 2 \
+    --warm_epochs 1 \
     --adaptive_warmup_threshold 0.35 \
     --fn_filter_use_binary ${fn_filter_use_binary}\
     --fn_filter_use_prior ${fn_filter_use_prior}\
-    --model_save_path checkpoints/binary_prior_ablation/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_PAMAP2 \
+    --model_save_path checkpoints/binary_prior_ablation/warmup1_maxiter200_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_PAMAP2 \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -55,5 +55,5 @@ python -u main_5fold.py \
     --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
-    --prior_fit_max_iter 100 \
+    --prior_fit_max_iter 200 \
     --prior_segment_len 4

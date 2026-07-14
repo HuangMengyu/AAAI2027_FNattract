@@ -1,0 +1,13 @@
+dataset_name,branch,quadrant,same_class_rate,same_class_rate_mean,same_class_rate_std,pair_percentage_mean,pair_percentage_std,n_runs,epochs_used
+UCI-HAR_total,inter,binary_no_prior_no,0.009 +/- 0.003,0.009,0.003,0.335,0.005,5,10
+UCI-HAR_total,inter,binary_no_prior_yes,0.173 +/- 0.021,0.173,0.021,0.175,0.005,5,10
+UCI-HAR_total,inter,binary_yes_prior_no,0.158 +/- 0.004,0.158,0.004,0.195,0.007,5,10
+UCI-HAR_total,inter,binary_yes_prior_yes,0.388 +/- 0.005,0.388,0.005,0.295,0.007,5,10
+UCI-HAR_total,intra,binary_no_prior_no,0.044 +/- 0.001,0.044,0.001,0.405,0.007,5,10
+UCI-HAR_total,intra,binary_no_prior_yes,0.263 +/- 0.004,0.263,0.004,0.155,0.008,5,10
+UCI-HAR_total,intra,binary_yes_prior_no,0.114 +/- 0.015,0.114,0.015,0.125,0.005,5,10
+UCI-HAR_total,intra,binary_yes_prior_yes,0.301 +/- 0.002,0.301,0.002,0.315,0.008,5,10
+UCI-HAR_total,temporal,binary_no_prior_no,0.055 +/- 0.003,0.055,0.003,0.317,0.015,5,10
+UCI-HAR_total,temporal,binary_no_prior_yes,0.143 +/- 0.005,0.143,0.005,0.187,0.014,5,10
+UCI-HAR_total,temporal,binary_yes_prior_no,0.177 +/- 0.003,0.177,0.003,0.150,0.004,5,10
+UCI-HAR_total,temporal,binary_yes_prior_yes,0.279 +/- 0.006,0.279,0.006,0.347,0.003,5,10

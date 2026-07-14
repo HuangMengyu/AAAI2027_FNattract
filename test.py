@@ -194,6 +194,7 @@ def evaluate_checkpoint_root(
     n_classes,
     dataset_name,
     num_folds,
+    seeds
 ):
     print(f"Evaluating Checkpoint path [{checkpoint_name}]: {checkpoint_path}")
     acc_results = []
@@ -202,7 +203,7 @@ def evaluate_checkpoint_root(
     fold_scores = {metric: [] for metric in ["auc", "acc", "F1"]}
     seed_scores = {metric: [] for metric in ["auc", "acc", "F1"]}
 
-    for seed in opt.seeds:
+    for seed in seeds:
         models_save_path = os.path.join(checkpoint_path, f"{seed}")
         acc_results_seed = []
         f1_results_seed = []
@@ -322,8 +323,16 @@ def main():
     
 
     opt = in_parser.parse_args()
-    checkpoint_specs = resolve_checkpoint_specs(opt)
     
+    if opt.dataset_name == 'SleepEDFx_3' or opt.dataset_name == 'PAMAP2_3':
+        print("Using 3-modality input for dataset:", opt.dataset_name)
+        # opt.seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
+        opt.seeds = [0, 20, 42, 60, 80]
+    print(opt.seeds)
+    
+    checkpoint_specs = resolve_checkpoint_specs(opt)
+
+
     small_classifier = False
     dataset_name = opt.dataset_name
     loader_dataset_name = dataset_name.replace('_3', '')
@@ -396,6 +405,7 @@ def main():
             n_classes=n_classes,
             dataset_name=dataset_name,
             num_folds=num_folds,
+            seeds=opt.seeds
         )
 
     if opt.baseline_checkpoint_path:

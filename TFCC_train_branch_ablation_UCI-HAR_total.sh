@@ -29,17 +29,17 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
 # mkdir -p logs_branch_ablation/UCI-HAR_total
-srun --output="logs_branch_ablation/UCI-HAR_total/${filter_temporal}_${filter_intra}_${filter_inter}_UCI-HAR_total_%A_%a.out" \
+srun --output="logs_branch_ablation/UCI-HAR_total/warmup1_${filter_temporal}_${filter_intra}_${filter_inter}_UCI-HAR_total_%A_%a.out" \
 python main_5fold.py \
     --dataset_name UCI-HAR_total \
     --current_num_fold ${current_num_fold} \
     --epochs 10 \
-    --warm_epochs 2 \
+    --warm_epochs 1 \
     --adaptive_warmup_threshold 0.35 \
     --filter_temporal ${filter_temporal} \
     --filter_intra ${filter_intra} \
     --filter_inter ${filter_inter} \
-    --model_save_path checkpoints/branch_ablation/${filter_temporal}_${filter_intra}_${filter_inter}_UCI-HAR_total \
+    --model_save_path checkpoints/branch_ablation/warmup1_${filter_temporal}_${filter_intra}_${filter_inter}_UCI-HAR_total \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \

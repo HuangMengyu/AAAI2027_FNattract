@@ -5,7 +5,7 @@
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=TFCC_multimodal
 #SBATCH --array=1-5
-#SBATCH --output=logs_4/UCI-HAR_total/gmm_200iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_UCI-HAR_total_%A_%a.out
+#SBATCH --output=logs/UCI-HAR_total/warmup1_UCI-HAR_total_%A_%a.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -36,9 +36,10 @@ python main_5fold.py \
     --dataset_name UCI-HAR_total \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
     --epochs 10 \
-    --warm_epochs adaptive \
+    --warm_epochs 1 \
     --adaptive_warmup_threshold 0.35 \
-    --model_save_path checkpoints/gmm_200iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_UCI-HAR_total \
+    --fn_filter_use_prior False \
+    --model_save_path checkpoints_fn_analysis/warmup1_UCI-HAR_total \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -52,13 +53,13 @@ python main_5fold.py \
     --prior_gmm_metric cosine \
     --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
-    --prior_save_dir prior_cache/UCI-HAR_total_gmm_200iter_concat_cosine_adaptivewarmup \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
     --prior_fit_max_iter 200 \
-    --prior_segment_len 4
+    --prior_segment_len 4 \
+    --fn_analysis True\
 
 
 

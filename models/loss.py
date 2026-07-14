@@ -6,7 +6,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .filter_stats import update_filter_stats, update_label_agreement_stats
+from .filter_stats import update_filter_stats, update_fn_analysis_stats, update_label_agreement_stats
 from .prior_bmm import prior_pair_value_matrix, prior_positive_probability_matrix, similarity_bmm_probability_matrix
 
 
@@ -143,6 +143,14 @@ class InfoNCE(nn.Module):
                 prior_prob=prior_prob,
                 prior_candidate_mask=candidate_mask,
                 prior_hard_neg_mask=hard_neg_mask,
+            )
+            update_fn_analysis_stats(
+                self.filter_stats,
+                self.stats_key,
+                self.labels,
+                diag_mask,
+                binary_output=binary_output,
+                prior_prob=prior_prob,
             )
             update_label_agreement_stats(
                 self.filter_stats,
@@ -308,6 +316,14 @@ def loss_ntxent_anchor_vs_modalities(
                 prior_prob=prior_prob,
                 prior_candidate_mask=candidate_mask,
                 prior_hard_neg_mask=hard_neg_mask,
+            )
+            update_fn_analysis_stats(
+                filter_stats,
+                branch_config.get("stats_key", f"inter_anchor_branch_{branch_idx}"),
+                labels,
+                diag_mask,
+                binary_output=binary_output,
+                prior_prob=prior_prob,
             )
             update_label_agreement_stats(
                 filter_stats,

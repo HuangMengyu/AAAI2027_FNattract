@@ -2,7 +2,7 @@
 #SBATCH -A NAISS2026-4-117 -p alvis
 #SBATCH -t 00:30:00
 #SBATCH --ntasks=1
-#SBATCH --gpus-per-node=A40:1
+#SBATCH --gpus-per-node=A100:1
 #SBATCH --job-name=TFCC-test
 #SBATCH --output=logs_3modality/test/SleepEDFx_3_%A.out
 
@@ -25,4 +25,4 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 python test.py \
     --dataset_name SleepEDFx_3 \
     --baseline_checkpoint_path checkpoints_3modality/baseline_SleepEDFx_3 \
-    --checkpoint_path checkpoints_3modality/newmethod_1vsall_SleepEDFx_3
+    --checkpoint_path checkpoints_3modality/4000_4_200_warmup9_newmethod_pairwise_SleepEDFx_3

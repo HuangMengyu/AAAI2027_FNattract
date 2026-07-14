@@ -28,5 +28,5 @@ srun --output="logs_binary_prior/test/SleepEDFx/Binary${fn_filter_use_binary}_Pr
 python test.py \
     --dataset_name SleepEDFx \
     --baseline_checkpoint_path checkpoints_baseline_best/baseline_SleepEDFx \
-    --checkpoint_path checkpoints/binary_prior_ablation/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_SleepEDFx \
+    --checkpoint_path checkpoints/binary_prior_ablation/4000_4_warmup4_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_SleepEDFx \
 

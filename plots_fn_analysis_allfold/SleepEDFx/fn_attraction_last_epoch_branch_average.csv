@@ -1,0 +1,10 @@
+dataset_name,branch,signal,precision,recall,false_attraction_rate,precision_mean,precision_std,recall_mean,recall_std,false_attraction_rate_mean,false_attraction_rate_std,n_runs,epochs_used
+SleepEDFx,inter,binary,0.310 +/- 0.005,0.711 +/- 0.025,0.594 +/- 0.009,0.310,0.005,0.711,0.025,0.594,0.009,5,10
+SleepEDFx,inter,prior,0.271 +/- 0.008,0.863 +/- 0.010,0.868 +/- 0.014,0.271,0.008,0.863,0.010,0.868,0.014,5,10
+SleepEDFx,inter,combined,0.304 +/- 0.005,0.619 +/- 0.025,0.531 +/- 0.009,0.304,0.005,0.619,0.025,0.531,0.009,5,10
+SleepEDFx,intra,binary,0.273 +/- 0.010,0.602 +/- 0.017,0.603 +/- 0.017,0.273,0.010,0.602,0.017,0.603,0.017,5,10
+SleepEDFx,intra,prior,0.271 +/- 0.008,0.863 +/- 0.010,0.868 +/- 0.014,0.271,0.008,0.863,0.010,0.868,0.014,5,10
+SleepEDFx,intra,combined,0.271 +/- 0.008,0.518 +/- 0.018,0.522 +/- 0.018,0.271,0.008,0.518,0.018,0.522,0.018,5,10
+SleepEDFx,temporal,binary,0.270 +/- 0.009,0.715 +/- 0.010,0.724 +/- 0.014,0.270,0.009,0.715,0.010,0.724,0.014,5,10
+SleepEDFx,temporal,prior,0.273 +/- 0.011,0.740 +/- 0.010,0.740 +/- 0.010,0.273,0.011,0.740,0.010,0.740,0.010,5,10
+SleepEDFx,temporal,combined,0.270 +/- 0.010,0.531 +/- 0.012,0.538 +/- 0.015,0.270,0.010,0.531,0.012,0.538,0.015,5,10

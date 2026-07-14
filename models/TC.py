@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 from .attention import Seq_Transformer, Attention
 
-from .filter_stats import update_filter_stats, update_label_agreement_stats
+from .filter_stats import update_filter_stats, update_fn_analysis_stats, update_label_agreement_stats
 from .prior_bmm import (
     prior_pair_value_matrix,
     prior_positive_probability_matrix,
@@ -237,6 +237,14 @@ class TC(nn.Module):
                         prior_prob=prior_prob,
                         prior_candidate_mask=candidate_mask,
                         prior_hard_neg_mask=hard_neg_mask,
+                    )
+                    update_fn_analysis_stats(
+                        filter_stats,
+                        stats_key,
+                        labels,
+                        diag_mask,
+                        binary_output=binary_output,
+                        prior_prob=prior_prob,
                     )
 
                     pos_weight = diag_mask.float() + attract_mask.float() * attract_weight

@@ -1,0 +1,13 @@
+dataset_name,branch,quadrant,same_class_rate,same_class_rate_mean,same_class_rate_std,pair_percentage_mean,pair_percentage_std,n_runs,epochs_used
+PAMAP2,inter,binary_no_prior_no,0.043 +/- 0.016,0.043,0.016,0.503,0.122,4,10
+PAMAP2,inter,binary_no_prior_yes,0.074 +/- 0.031,0.074,0.031,0.116,0.116,4,10
+PAMAP2,inter,binary_yes_prior_no,0.231 +/- 0.024,0.231,0.024,0.199,0.064,4,10
+PAMAP2,inter,binary_yes_prior_yes,0.302 +/- 0.063,0.302,0.063,0.182,0.070,4,10
+PAMAP2,intra,binary_no_prior_no,0.062 +/- 0.016,0.062,0.016,0.570,0.141,4,10
+PAMAP2,intra,binary_no_prior_yes,0.134 +/- 0.082,0.134,0.082,0.122,0.109,4,10
+PAMAP2,intra,binary_yes_prior_no,0.228 +/- 0.018,0.228,0.018,0.132,0.045,4,10
+PAMAP2,intra,binary_yes_prior_yes,0.313 +/- 0.070,0.313,0.070,0.176,0.076,4,10
+PAMAP2,temporal,binary_no_prior_no,0.045 +/- 0.002,0.045,0.002,0.482,0.029,4,10
+PAMAP2,temporal,binary_no_prior_yes,0.102 +/- 0.040,0.102,0.040,0.117,0.027,4,10
+PAMAP2,temporal,binary_yes_prior_no,0.216 +/- 0.015,0.216,0.015,0.234,0.025,4,10
+PAMAP2,temporal,binary_yes_prior_yes,0.302 +/- 0.046,0.302,0.046,0.167,0.028,4,10

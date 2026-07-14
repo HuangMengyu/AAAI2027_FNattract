@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-22-1224 -p alvis
-#SBATCH -t 10:00:00
+#SBATCH -t 03:30:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
-#SBATCH --job-name=TFCC_multimodal
+#SBATCH --job-name=SleepEDFx_3
 #SBATCH --array=1-5
-#SBATCH --output=logs_3modality/SleepEDFx_3/newmethod_1vsall_SleepEDFx_3_%A_%a.out
+#SBATCH --output=logs_3modality/SleepEDFx_3_2/4000_4_200_warmup9_newmethod_pairwise_SleepEDFx_3_%A_%a.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -38,10 +38,10 @@ python -u main_5fold.py \
     --dataset_name SleepEDFx_3 \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
     --epochs 10 \
-    --warm_epochs 2 \
+    --warm_epochs 9 \
     --adaptive_warmup_threshold 0.035 \
-    --three_mod_contrast 1vsall \
-    --model_save_path checkpoints_3modality/newmethod_1vsall_SleepEDFx_3 \
+    --three_mod_contrast pairwise \
+    --model_save_path checkpoints_3modality/4000_4_200_warmup9_newmethod_pairwise_SleepEDFx_3 \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -53,14 +53,13 @@ python -u main_5fold.py \
     --intra_binary_mode binary \
     --inter_binary_mode binary \
     --prior_gmm_metric cosine \
-    --prior_center_cosine False \
+    --prior_cancel_weighting False \
     --use_intra_sample_for_temporal_filter False \
-    --prior_save_dir prior_cache/SleepEDFx_3_1vsall \
     --prior_hard_neg_weight 1.0 \
-    --prior_num_random_pairs 10000 \
+    --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
     --prior_fit_max_iter 200 \
-    --prior_segment_len 40 
+    --prior_segment_len 4
 
     

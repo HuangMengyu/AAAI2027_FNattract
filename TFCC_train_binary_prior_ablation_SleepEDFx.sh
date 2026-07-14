@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2026-4-351 -p alvis
-#SBATCH -t 09:00:00
+#SBATCH -A NAISS2026-4-117 -p alvis
+#SBATCH -t 08:40:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=binary_prior_ablation_SleepEDFx
@@ -28,16 +28,16 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
-srun --output="logs_binary_prior/SleepEDFx/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_SleepEDFx_%A_%a.out" \
+srun --output="logs_binary_prior/SleepEDFx/4000_4_warmup4_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_SleepEDFx_%A_%a.out" \
 python -u main_5fold.py \
     --dataset_name SleepEDFx \
     --current_num_fold ${current_num_fold} \
     --epochs 10 \
-    --warm_epochs 2 \
+    --warm_epochs 4 \
     --adaptive_warmup_threshold 0.35 \
     --fn_filter_use_binary ${fn_filter_use_binary}\
     --fn_filter_use_prior ${fn_filter_use_prior}\
-    --model_save_path checkpoints/binary_prior_ablation/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_SleepEDFx \
+    --model_save_path checkpoints/binary_prior_ablation/4000_4_warmup4_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_SleepEDFx \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -52,8 +52,8 @@ python -u main_5fold.py \
     --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
     --prior_hard_neg_weight 1.0 \
-    --prior_num_random_pairs 10000 \
+    --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
     --prior_fit_max_iter 200 \
-    --prior_segment_len 40
+    --prior_segment_len 4

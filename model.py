@@ -6,6 +6,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.TC import TC
 from models.loss import loss_ntxent, loss_ntxent_anchor_vs_modalities
+from models.filter_stats import (
+    build_fn_analysis_rows,
+    format_branch_label,
+    fn_analysis_enabled,
+    init_fn_analysis_stats,
+    save_fn_analysis_outputs,
+)
 from models.prior_bmm import (
     prepare_prior_for_torch,
     prior_positive_probability_matrix,
@@ -104,6 +111,11 @@ class TFCC(nn.Module):
         use_intra_sample_for_temporal_filter=False,
         pretrain_labels=None,
         contrast_mode="pairwise",
+        fn_analysis=False,
+        fn_analysis_dir=None,
+        fn_analysis_every=1,
+        fn_analysis_threshold=0.5,
+        fn_analysis_context=None,
         ):
         super(TFCC, self).__init__()
         self.EEG_encoder = EEG_encoder
@@ -247,6 +259,13 @@ class TFCC(nn.Module):
         self.inter_binary_mode = self.normalize_binary_mode(inter_binary_mode, replace_binary_with_bmm)
         self.use_intra_sample_for_temporal_filter = use_intra_sample_for_temporal_filter
         self.pretrain_labels = torch.tensor(pretrain_labels, dtype=torch.long) if pretrain_labels is not None else None
+        self.fn_analysis = fn_analysis
+        self.fn_analysis_dir = fn_analysis_dir
+        self.fn_analysis_every = max(1, int(fn_analysis_every))
+        self.fn_analysis_threshold = float(fn_analysis_threshold)
+        self.fn_analysis_context = fn_analysis_context or {}
+        self.fn_analysis_attraction_rows = []
+        self.fn_analysis_overlap_rows = []
 
         self.scope_variable = 0 if self.adaptive_warmup else self.warm_epochs / self.num_epochs
 
@@ -297,6 +316,55 @@ class TFCC(nn.Module):
         if self.adaptive_warmup:
             return self.filter_start_epoch is not None and epoch >= self.filter_start_epoch
         return epoch >= self.warm_epochs
+
+    def should_analyze_epoch(self, epoch):
+        if not self.fn_analysis:
+            return False
+        filter_start_epoch = self.filter_start_epoch if self.filter_start_epoch is not None else self.warm_epochs
+        if epoch < filter_start_epoch:
+            return False
+        return (epoch - filter_start_epoch) % self.fn_analysis_every == 0
+
+    def make_filter_stats(self, epoch, filter_active):
+        filter_stats = {}
+        if filter_active and self.should_analyze_epoch(epoch):
+            init_fn_analysis_stats(filter_stats, epoch, threshold=self.fn_analysis_threshold)
+        return filter_stats
+
+    def append_and_save_fn_analysis(self, epoch, filter_stats):
+        if not fn_analysis_enabled(filter_stats):
+            return
+        attraction_rows, overlap_rows = build_fn_analysis_rows(
+            filter_stats,
+            context=self.fn_analysis_context,
+        )
+        self.fn_analysis_attraction_rows.extend(attraction_rows)
+        self.fn_analysis_overlap_rows.extend(overlap_rows)
+        if self.fn_analysis_dir is not None:
+            save_fn_analysis_outputs(
+                self.fn_analysis_dir,
+                self.fn_analysis_attraction_rows,
+                self.fn_analysis_overlap_rows,
+                metadata=self.fn_analysis_metadata(),
+            )
+
+    def fn_analysis_metadata(self):
+        return {
+            **self.fn_analysis_context,
+            "fn_analysis_threshold": self.fn_analysis_threshold,
+            "fn_analysis_every": self.fn_analysis_every,
+            "filter_temporal": self.filter_temporal,
+            "filter_intra": self.filter_intra,
+            "filter_inter": self.filter_inter,
+            "fn_filter_use_binary": self.fn_filter_use_binary,
+            "fn_filter_use_prior": self.fn_filter_use_prior,
+            "use_prior": self.use_prior,
+            "prior_mode": self.prior_mode,
+            "temporal_binary_mode": self.temporal_binary_mode,
+            "intra_binary_mode": self.intra_binary_mode,
+            "inter_binary_mode": self.inter_binary_mode,
+            "contrast_mode": self.contrast_mode,
+        }
 
     def update_scope_variable(self, epoch):
         filter_start_epoch = self.filter_start_epoch if self.filter_start_epoch is not None else self.warm_epochs
@@ -524,7 +592,7 @@ class TFCC(nn.Module):
                     )
                 label_extra = " | " + " | ".join(label_parts)
             print(
-                f"Filter stats epoch {epoch + 1} [{branch}]: "
+                f"Filter stats epoch {epoch + 1} [{format_branch_label(branch)}]: "
                 f"calls={stats['calls']} | "
                 f"FN={stats['fn'] / pairs:.4f} | "
                 f"attract={stats['attract'] / pairs:.4f} | "
@@ -549,10 +617,10 @@ class TFCC(nn.Module):
         
         pbar = trange(self.num_epochs)
         for e in pbar:
-            filter_stats = {}
             epoch_losses = []
             epoch_binary_losses = []
             filter_active = self.should_filter_epoch(e)
+            filter_stats = self.make_filter_stats(e, filter_active)
             if not self.use_iteration:
                 for batch in train_loader:
                     *batch_tensors, index = batch
@@ -592,6 +660,7 @@ class TFCC(nn.Module):
             pbar.set_description(f"avg_loss: {str(avg_loss)}, avg_binary_loss: {str(avg_binary_loss)}")
             if filter_active:
                 self.print_filter_stats(e, filter_stats)
+                self.append_and_save_fn_analysis(e, filter_stats)
             elif self.adaptive_warmup and previous_avg_loss is not None:
                 should_start_filtering, loss_drop, binary_loss_drop = self.should_end_adaptive_warmup(
                     previous_avg_loss,
@@ -608,6 +677,8 @@ class TFCC(nn.Module):
                     )
             previous_avg_loss = avg_loss
             previous_avg_binary_loss = avg_binary_loss
+        if self.fn_analysis and self.fn_analysis_dir is not None and self.fn_analysis_attraction_rows:
+            print(f"Saved false-negative attraction analysis to {self.fn_analysis_dir}")
 
     def form_binary_loss_data(self, x, x_aug):
         batch_size = x.shape[0]
@@ -698,7 +769,7 @@ class TFCC(nn.Module):
                 binary_classifier=temporal_binary_classifier,
                 scope_variable=self.scope_variable,
                 filter_stats=filter_stats,
-                stats_key="temporal",
+                stats_key=f"temporal:{mod_key}",
                 return_binary_data=True,
                 fn_filter_use_binary=self.fn_filter_use_binary,
                 fn_filter_use_prior=self.fn_filter_use_prior,
@@ -717,7 +788,7 @@ class TFCC(nn.Module):
                 binary_classifier=temporal_binary_classifier,
                 scope_variable=self.scope_variable,
                 filter_stats=filter_stats,
-                stats_key="temporal",
+                stats_key=f"temporal:{mod_key}",
                 return_binary_data=True,
                 fn_filter_use_binary=self.fn_filter_use_binary,
                 fn_filter_use_prior=self.fn_filter_use_prior,
@@ -905,6 +976,11 @@ class Model(nn.Module):
         use_intra_sample_for_temporal_filter=False,
         pretrain_labels=None,
         contrast_mode="pairwise",
+        fn_analysis=False,
+        fn_analysis_dir=None,
+        fn_analysis_every=1,
+        fn_analysis_threshold=0.5,
+        fn_analysis_context=None,
         ):
         super(Model, self).__init__()
   
@@ -944,6 +1020,11 @@ class Model(nn.Module):
             use_intra_sample_for_temporal_filter=use_intra_sample_for_temporal_filter,
             pretrain_labels=pretrain_labels,
             contrast_mode=contrast_mode,
+            fn_analysis=fn_analysis,
+            fn_analysis_dir=fn_analysis_dir,
+            fn_analysis_every=fn_analysis_every,
+            fn_analysis_threshold=fn_analysis_threshold,
+            fn_analysis_context=fn_analysis_context,
         )
         
         self.classifier = MLP(hidden_dim * self.num_modalities, hidden_dim, num_class)

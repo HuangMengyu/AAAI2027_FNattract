@@ -30,14 +30,14 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 # For Testing:
 python t-SNE.py \
   --dataset_name UCI-HAR_total \
-  --fold 3 \
+  --fold 1 \
   --seed 0 \
   --apply_pca False \
   --baseline_checkpoint_path checkpoints_baseline_best/baseline_UCI-HAR_total \
-  --method_checkpoint_path checkpoints_baseline_best/gmm_200iter_concat_cosine_adaptivewarmup0.35_UCI-HAR_total_current_best \
+  --method_checkpoint_path checkpoints/warmup_ablation/warmup1_UCI-HAR_total \
   --baseline_name baseline \
   --method_name new_method \
-  --img_save_dir tsne_outputs_nopca/UCI-HAR_total_fold3 \
+  --img_save_dir tsne_outputs_nopca/UCI-HAR_total_fold1_warmup1 \
   --feature_level transformer
 
     

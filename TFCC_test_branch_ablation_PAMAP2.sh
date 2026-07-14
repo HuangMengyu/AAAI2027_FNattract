@@ -24,9 +24,9 @@ export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
-srun --output="logs_branch_ablation/test/PAMAP2/${filter_temporal}_${filter_intra}_${filter_inter}_PAMAP2_%A_%a.out" \
+srun --output="logs_branch_ablation/test/PAMAP2/warmup1_${filter_temporal}_${filter_intra}_${filter_inter}_PAMAP2_%A_%a.out" \
 python test.py \
     --dataset_name PAMAP2 \
     --baseline_checkpoint_path checkpoints_baseline_best/baseline_PAMAP2 \
-    --checkpoint_path checkpoints/branch_ablation/${filter_temporal}_${filter_intra}_${filter_inter}_PAMAP2 \
+    --checkpoint_path checkpoints/branch_ablation/warmup1_maxiter200_${filter_temporal}_${filter_intra}_${filter_inter}_PAMAP2 \
 

@@ -1,0 +1,3 @@
+current_num_fold=1 warm_epochs=1
+current_num_fold=1 warm_epochs=4
+current_num_fold=1 warm_epochs=8

@@ -1,0 +1,3 @@
+current_num_fold=1 prior_delta_mode=none
+current_num_fold=1 prior_delta_mode=delta
+current_num_fold=1 prior_delta_mode=both

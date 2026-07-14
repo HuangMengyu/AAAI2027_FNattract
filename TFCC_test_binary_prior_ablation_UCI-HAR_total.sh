@@ -24,9 +24,9 @@ export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
-srun --output="logs_binary_prior/test/UCI-HAR_total/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_UCI-HAR_total_%A_%a.out" \
+srun --output="logs_binary_prior/test/UCI-HAR_total/warmup1_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_UCI-HAR_total_%A_%a.out" \
 python test.py \
     --dataset_name UCI-HAR_total \
     --baseline_checkpoint_path checkpoints_baseline_best/baseline_UCI-HAR_total \
-    --checkpoint_path checkpoints/binary_prior_ablation/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_UCI-HAR_total \
+    --checkpoint_path checkpoints/binary_prior_ablation/warmup1_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_UCI-HAR_total \
 

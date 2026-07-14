@@ -15,6 +15,7 @@ module load matplotlib/3.7.2-gfbf-2023a
 
 python -m venv t-SNE_env
 source t-SNE_env/bin/activate
+# pip install umap-learn
 # pip install kaleido==0.2.1
 
 export CUDA_LAUNCH_BLOCKING=1
@@ -30,14 +31,18 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 # For Testing:
 python t-SNE.py \
   --dataset_name PAMAP2 \
-  --fold 3 \
+  --fold 1 \
   --seed 0 \
   --apply_pca False \
   --baseline_checkpoint_path checkpoints_baseline_best/baseline_PAMAP2 \
-  --method_checkpoint_path checkpoints_baseline_best/gmm_100iter_concat_cosine_adaptivewarmup0.35_PAMAP2_current_best \
+  --method_checkpoint_path checkpoints/warmup_ablation/maxiter200_warmup1_PAMAP2 \
   --baseline_name baseline \
   --method_name new_method \
-  --img_save_dir tsne_outputs_nopca/PAMAP2_fold3 \
-  --feature_level transformer
+  --img_save_dir umap_outputs_nopca/PAMAP2_fold1_maxiter200_warmup1 \
+  --feature_level transformer \
+  --perplexity 30 \
+  --reducer umap \
+  --umap_n_neighbors 10 \
+  --umap_min_dist 0.25 \
 
     

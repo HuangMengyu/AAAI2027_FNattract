@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2025-22-1224 -p alvis
+#SBATCH -A NAISS2026-4-117 -p alvis
 #SBATCH -t 00:30:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=TFCC_multimodal
 #SBATCH --array=1-4
-#SBATCH --output=logs_4/PAMAP2/gmm_100iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_PAMAP2_%A_%a.out
+#SBATCH --output=logs/PAMAP2/maxiter200_warmup1_PAMAP2_%A_%a.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -38,9 +38,10 @@ python -u main_5fold.py \
     --dataset_name PAMAP2 \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
     --epochs 10 \
-    --warm_epochs adaptive \
+    --warm_epochs 2 \
     --adaptive_warmup_threshold 0.35 \
-    --model_save_path checkpoints/gmm_100iter_concat_cosine_adaptivewarmup0.35_usehardnegdownweight_PAMAP2 \
+    --fn_filter_use_prior True \
+    --model_save_path checkpoints_fn_analysis/warmup1_maxiter200_PAMAP2 \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -54,13 +55,13 @@ python -u main_5fold.py \
     --prior_gmm_metric cosine \
     --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
-    --prior_save_dir prior_cache/PAMAP2_gmm_100iter_concat_cosine_adaptivewarmup \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
-    --prior_fit_max_iter 100 \
-    --prior_segment_len 4
+    --prior_fit_max_iter 200 \
+    --prior_segment_len 4 \
+    --fn_analysis True\
 
 
 

@@ -3,7 +3,7 @@
 #SBATCH -t 00:30:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
-#SBATCH --job-name=TFCC-test
+#SBATCH --job-name=4000_4_warmup4_branch_ablation_SleepEDFx
 #SBATCH --array=1-6
 
 input_file=/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027/branch_ablation_test.txt
@@ -24,9 +24,9 @@ export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
-srun --output="logs_branch_ablation/test/SleepEDFx/${filter_temporal}_${filter_intra}_${filter_inter}_SleepEDFx_%A_%a.out" \
+srun --output="logs_branch_ablation/test/4000_4_warmup4_SleepEDFx/${filter_temporal}_${filter_intra}_${filter_inter}_SleepEDFx_%A_%a.out" \
 python test.py \
     --dataset_name SleepEDFx \
     --baseline_checkpoint_path checkpoints_baseline_best/baseline_SleepEDFx \
-    --checkpoint_path checkpoints/branch_ablation/${filter_temporal}_${filter_intra}_${filter_inter}_SleepEDFx \
+    --checkpoint_path checkpoints/branch_ablation/4000_4_warmup4_${filter_temporal}_${filter_intra}_${filter_inter}_SleepEDFx \
 

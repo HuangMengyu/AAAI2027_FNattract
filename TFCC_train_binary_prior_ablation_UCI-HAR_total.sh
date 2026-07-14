@@ -28,16 +28,16 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
-srun --output="logs_binary_prior/UCI-HAR_total/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_UCI-HAR_total_%A_%a.out" \
+srun --output="logs_binary_prior/UCI-HAR_total/warmup1_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_UCI-HAR_total_%A_%a.out" \
 python -u main_5fold.py \
     --dataset_name UCI-HAR_total \
     --current_num_fold ${current_num_fold} \
     --epochs 10 \
-    --warm_epochs 2 \
+    --warm_epochs 1 \
     --adaptive_warmup_threshold 0.35 \
     --fn_filter_use_binary ${fn_filter_use_binary}\
     --fn_filter_use_prior ${fn_filter_use_prior}\
-    --model_save_path checkpoints/binary_prior_ablation/Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_UCI-HAR_total \
+    --model_save_path checkpoints/binary_prior_ablation/warmup1_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_UCI-HAR_total \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \

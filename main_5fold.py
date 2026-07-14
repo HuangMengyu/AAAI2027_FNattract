@@ -209,7 +209,7 @@ if __name__ == '__main__':
     parser.add_argument("--dataset_name", type=str, default='SleepEDFx', choices=['SleepEDFx', 'SleepEDFx_3', 'PAMAP2', 'PAMAP2_3', 'UCI-HAR', 'UCI-HAR_total'])
     parser.add_argument("--model_save_path", type=str, default='.')
     parser.add_argument("--current_num_fold", type=int, default=1)
-    parser.add_argument("--seeds", nargs='*', type=list, default=[0, 20, 40])
+    parser.add_argument("--seeds", nargs='*', type=int, default=[0, 20, 40])
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--warm_epochs", "--warm_epoch", type=parse_warm_epochs, default=50)
@@ -237,16 +237,19 @@ if __name__ == '__main__':
     parser.add_argument('--prior_mode', type=str, default='combined', choices=['combined', 'separate'], help='whether to fit/use a combined-modality prior or separate modality priors')
     parser.add_argument('--prior_model', type=str, default='bmm', choices=['bmm', 'gmm'], help='mixture model for prior distances; BMM scales distances to [0, 1], GMM uses raw distances')
     parser.add_argument('--prior_gmm_metric', type=str, default='euclidean', choices=['euclidean', 'cosine', 'cosine_euclidean'], help='pair feature used for prior mixture fitting: Euclidean distance, cosine similarity, or their concatenation')
-    parser.add_argument('--prior_delta_mode', type=str, default='none', choices=['none', 'delta', 'concat'], help='whether to use log-RMS magnitude only, adjacent log-RMS delta only, or concatenate both as prior features')
+    parser.add_argument('--prior_delta_mode', type=str, default='concat', choices=['none', 'delta', 'concat', 'both'], help='whether to use magnitude only, delta only, concatenated magnitude+delta, or separate magnitude/delta pair variables')
     parser.add_argument('--prior_fit_max_iter', type=int, default=200, help='maximum EM iterations for BMM/GMM prior fitting')
     parser.add_argument('--prior_plot', type=str2bool, default=False, help='whether to save distance histogram and fitted prior mixture overlay plots after fitting')
     parser.add_argument('--prior_save_dir', type=str, default=None, help='directory for saving/loading magnitude prior artifacts')
     parser.add_argument('--prior_hard_neg_weight', type=parse_prior_hard_neg_weight, default=1.0, help="negative weight for binary-positive pairs rejected by the prior mixture model; use 'auto' for 1 + 0.001 * binary_output * (1 - prior_prob)")
-    parser.add_argument('--prior_cancel_weighting', type=str2bool, default=True, help='whether prior cancel pairs use 1 - prior_prob as weight; if false, use weight 1')
+    parser.add_argument('--prior_cancel_weighting', type=str2bool, default=False, help='whether prior cancel pairs use 1 - prior_prob as weight; if false, use weight 1')
     parser.add_argument('--prior_num_random_pairs', type=int, default=3500, help='number of random off-diagonal pairs used to fit the prior mixture model')
     parser.add_argument('--prior_num_self_pairs', type=int, default=500, help='number of self-distance pairs used to fit the prior mixture model')
     parser.add_argument('--prior_segment_len', type=int, default=4, help='raw segment length used for RMS magnitude prior extraction')
-    parser.add_argument('--prior_center_cosine', type=str2bool, default=False, help='whether to mean-center prior features before cosine metrics; currently only enabled for SleepEDFx')
+    parser.add_argument('--fn_analysis', type=str2bool, default=False, help='whether to save offline false-negative attraction analysis during SSL pretraining')
+    parser.add_argument('--fn_analysis_dir', type=str, default=None, help='root directory for false-negative attraction analysis outputs; each dataset/fold/seed gets its own subdirectory')
+    parser.add_argument('--fn_analysis_every', type=int, default=1, help='analyze every N filtering-active epochs')
+    parser.add_argument('--fn_analysis_threshold', type=float, default=0.5, help='probability threshold used for offline attraction analysis')
     
     opt = parser.parse_args()
     fallback_binary_mode = 'bmm' if opt.replace_binary_with_bmm else 'binary'
@@ -318,10 +321,17 @@ if __name__ == '__main__':
     print("prior_num_random_pairs:", opt.prior_num_random_pairs)
     print("prior_num_self_pairs:", opt.prior_num_self_pairs)
     print("prior_segment_len:", opt.prior_segment_len)
-    print("prior_center_cosine_requested:", opt.prior_center_cosine)
+    print("fn_analysis:", opt.fn_analysis)
+    print("fn_analysis_dir:", opt.fn_analysis_dir)
+    print("fn_analysis_every:", opt.fn_analysis_every)
+    print("fn_analysis_threshold:", opt.fn_analysis_threshold)
 
-
-    seeds = opt.seeds  # use 3 seeds
+    if opt.dataset_name == 'SleepEDFx_3' or opt.dataset_name == 'PAMAP2_3':
+        print("Using 3-modality input for dataset:", opt.dataset_name)
+        # seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
+        seeds = [0, 20, 42, 60, 80]
+    else:
+        seeds = opt.seeds  # use 3 seeds
     print(seeds)
 
     ssl = opt.ssl
@@ -370,10 +380,6 @@ if __name__ == '__main__':
         print("n_classes:", n_classes, "input_dims", mod1_dims, mod2_dims, "time_steps", time_steps)
     
     print("Dataset path:", dataset_path)
-    effective_prior_center_cosine = bool(opt.prior_center_cosine and loader_dataset_name == 'SleepEDFx')
-    if opt.prior_center_cosine and loader_dataset_name != 'SleepEDFx':
-        print(f"prior_center_cosine disabled for dataset {dataset_name}; currently only enabled for SleepEDFx")
-    print("prior_center_cosine:", effective_prior_center_cosine)
 
     file_parser["filepath"] = dataset_path
     file_parser["Fold"] = opt.current_num_fold
@@ -385,6 +391,11 @@ if __name__ == '__main__':
         model_save_path = os.path.join(root_save_path, str(seed))
         if not os.path.exists(model_save_path):
             os.makedirs(model_save_path, exist_ok=True)
+        fn_analysis_root = opt.fn_analysis_dir or os.path.join(model_save_path, "fn_analysis")
+        fn_analysis_dir = os.path.join(
+            fn_analysis_root,
+            f"{dataset_name}_fold{opt.current_num_fold}_seed{seed}",
+        )
         
 
         i = opt.current_num_fold
@@ -419,7 +430,6 @@ if __name__ == '__main__':
                 prior_gmm_metric=opt.prior_gmm_metric,
                 prior_delta_mode=opt.prior_delta_mode,
                 prior_fit_max_iter=opt.prior_fit_max_iter,
-                prior_center_cosine=effective_prior_center_cosine,
                 three_mod_contrast=opt.three_mod_contrast,
                 plot=opt.prior_plot,
             )
@@ -462,6 +472,15 @@ if __name__ == '__main__':
             prior_cancel_weighting=opt.prior_cancel_weighting,
             pretrain_labels=pretrain_label,
             contrast_mode=opt.three_mod_contrast,
+            fn_analysis=opt.fn_analysis,
+            fn_analysis_dir=fn_analysis_dir,
+            fn_analysis_every=opt.fn_analysis_every,
+            fn_analysis_threshold=opt.fn_analysis_threshold,
+            fn_analysis_context={
+                "dataset_name": dataset_name,
+                "fold": i,
+                "seed": seed,
+            },
         )
         
         if ssl:

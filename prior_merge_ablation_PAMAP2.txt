@@ -1,0 +1,12 @@
+current_num_fold=1 prior_delta_mode=none
+current_num_fold=2 prior_delta_mode=none
+current_num_fold=3 prior_delta_mode=none
+current_num_fold=4 prior_delta_mode=none
+current_num_fold=1 prior_delta_mode=delta
+current_num_fold=2 prior_delta_mode=delta
+current_num_fold=3 prior_delta_mode=delta
+current_num_fold=4 prior_delta_mode=delta
+current_num_fold=1 prior_delta_mode=both
+current_num_fold=2 prior_delta_mode=both
+current_num_fold=3 prior_delta_mode=both
+current_num_fold=4 prior_delta_mode=both

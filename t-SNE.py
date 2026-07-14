@@ -85,7 +85,7 @@ def maybe_subsample(data, labels, max_samples, seed):
     rng = np.random.RandomState(seed)
     selected = rng.choice(data.shape[0], size=max_samples, replace=False)
     selected.sort()
-    print(f"Subsampled {max_samples} / {data.shape[0]} samples for t-SNE")
+    print(f"Subsampled {max_samples} / {data.shape[0]} samples for visualization")
     return data[selected], labels[selected]
 
 
@@ -97,11 +97,9 @@ def sanitize_features(features):
     return np.nan_to_num(features)
 
 
-def tsne_fit(features, seed=42, perplexity=30.0, apply_pca=True):
+def pca_preprocess(features, seed=42, apply_pca=True, reducer_name="visualization"):
     features = sanitize_features(np.asarray(features, dtype=np.float32))
     n_samples, n_features = features.shape
-    if n_samples < 2:
-        raise ValueError("Need at least two samples for t-SNE")
 
     if apply_pca:
         pca_components = min(50, n_features, n_samples - 1)
@@ -111,7 +109,21 @@ def tsne_fit(features, seed=42, perplexity=30.0, apply_pca=True):
         else:
             print("PCA skipped because the feature dimensionality is already small enough")
     else:
-        print("PCA disabled for t-SNE preprocessing")
+        print(f"PCA disabled for {reducer_name} preprocessing")
+
+    return features
+
+
+def tsne_fit(features, seed=42, perplexity=30.0, apply_pca=True):
+    features = pca_preprocess(
+        features,
+        seed=seed,
+        apply_pca=apply_pca,
+        reducer_name="t-SNE",
+    )
+    n_samples = features.shape[0]
+    if n_samples < 2:
+        raise ValueError("Need at least two samples for t-SNE")
 
     perplexity = min(float(perplexity), max(1.0, (n_samples - 1) / 3.0))
     embedding = TSNE(
@@ -125,7 +137,73 @@ def tsne_fit(features, seed=42, perplexity=30.0, apply_pca=True):
     return embedding
 
 
-def plot_tsne(embedding, labels, title, image_path):
+def umap_fit(
+    features,
+    seed=42,
+    n_neighbors=15,
+    min_dist=0.1,
+    metric="euclidean",
+    apply_pca=True,
+):
+    features = pca_preprocess(
+        features,
+        seed=seed,
+        apply_pca=apply_pca,
+        reducer_name="UMAP",
+    )
+    n_samples = features.shape[0]
+    if n_samples < 3:
+        raise ValueError("Need at least three samples for UMAP")
+
+    try:
+        import umap
+    except ImportError as exc:
+        raise ImportError(
+            "UMAP requested but umap-learn is not installed. Install it with `pip install umap-learn`."
+        ) from exc
+
+    n_neighbors = min(max(2, int(n_neighbors)), n_samples - 1)
+    embedding = umap.UMAP(
+        n_components=2,
+        random_state=seed,
+        n_neighbors=n_neighbors,
+        min_dist=float(min_dist),
+        metric=metric,
+    ).fit_transform(features)
+    print("Finished UMAP fitting.")
+    return embedding
+
+
+def fit_embedding(
+    features,
+    reducer,
+    seed=42,
+    perplexity=30.0,
+    apply_pca=True,
+    umap_n_neighbors=15,
+    umap_min_dist=0.1,
+    umap_metric="euclidean",
+):
+    if reducer == "tsne":
+        return tsne_fit(
+            features,
+            seed=seed,
+            perplexity=perplexity,
+            apply_pca=apply_pca,
+        )
+    if reducer == "umap":
+        return umap_fit(
+            features,
+            seed=seed,
+            n_neighbors=umap_n_neighbors,
+            min_dist=umap_min_dist,
+            metric=umap_metric,
+            apply_pca=apply_pca,
+        )
+    raise ValueError(f"Unsupported reducer: {reducer}")
+
+
+def plot_embedding(embedding, labels, title, image_path, reducer_label):
     os.makedirs(os.path.dirname(image_path), exist_ok=True)
     labels = np.asarray(labels)
     fig, ax = plt.subplots(figsize=(8, 6), dpi=180)
@@ -150,8 +228,8 @@ def plot_tsne(embedding, labels, title, image_path):
         )
 
     ax.set_title(title, fontsize=12, pad=8)
-    ax.set_xlabel("t-SNE 1", fontsize=10)
-    ax.set_ylabel("t-SNE 2", fontsize=10)
+    ax.set_xlabel(f"{reducer_label} 1", fontsize=10)
+    ax.set_ylabel(f"{reducer_label} 2", fontsize=10)
     ax.tick_params(labelsize=8)
     ax.grid(False)
     ax.spines["top"].set_visible(False)
@@ -174,7 +252,7 @@ def plot_tsne(embedding, labels, title, image_path):
     fig.tight_layout()
     fig.savefig(image_path, bbox_inches="tight")
     plt.close(fig)
-    print("t-SNE plot saved to:", image_path)
+    print(f"{reducer_label} plot saved to:", image_path)
 
 
 def resolve_checkpoint_file(checkpoint_path, seed, fold, checkpoint_file_name):
@@ -302,7 +380,12 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--baseline_checkpoint_path", type=str, default="")
     parser.add_argument("--method_checkpoint_path", type=str, default="")
-    parser.add_argument("--checkpoint_path", type=str, default="", help="Backward-compatible alias for --method_checkpoint_path")
+    parser.add_argument(
+        "--checkpoint_path",
+        type=str,
+        default="",
+        help="Backward-compatible alias for --method_checkpoint_path",
+    )
     parser.add_argument("--baseline_name", type=str, default="baseline")
     parser.add_argument("--method_name", type=str, default="method")
     parser.add_argument("--checkpoint_file_name", type=str, default="Finetuned_Model_{fold}.pkl")
@@ -310,10 +393,32 @@ def main():
     parser.add_argument("--experiment_log", type=str, default="")
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--max_samples", type=int, default=10000)
+    parser.add_argument(
+        "--reducer",
+        "--embedding_method",
+        dest="reducer",
+        type=str,
+        default="tsne",
+        choices=["tsne", "umap"],
+        help="2D embedding method to use",
+    )
     parser.add_argument("--perplexity", type=float, default=30.0)
+    parser.add_argument("--umap_n_neighbors", type=int, default=15)
+    parser.add_argument("--umap_min_dist", type=float, default=0.1)
+    parser.add_argument("--umap_metric", type=str, default="euclidean")
     parser.add_argument("--tsne_seed", type=int, default=42)
-    parser.add_argument("--feature_level", type=str, default="transformer", choices=["encoder", "transformer", "projector"])
-    parser.add_argument("--apply_pca", type=str2bool, default=True, help="Whether to apply PCA before running t-SNE")
+    parser.add_argument(
+        "--feature_level",
+        type=str,
+        default="transformer",
+        choices=["encoder", "transformer", "projector"],
+    )
+    parser.add_argument(
+        "--apply_pca",
+        type=str2bool,
+        default=True,
+        help="Whether to apply PCA before running the embedding method",
+    )
     parser.add_argument("--include_raw", type=str2bool, default=True)
     parser.add_argument("--strict_load", type=str2bool, default=False)
     opt = parser.parse_args()
@@ -331,6 +436,7 @@ def main():
     print("fold:", opt.fold)
     print("seed:", opt.seed)
     print("feature_level:", opt.feature_level)
+    print("reducer:", opt.reducer)
     print("apply_pca:", opt.apply_pca)
     print("device:", device)
 
@@ -340,16 +446,29 @@ def main():
     tag_parts = [opt.dataset_name, f"fold{opt.fold}", f"seed{opt.seed}"]
     if opt.experiment_log:
         tag_parts.append(opt.experiment_log)
+    if opt.reducer != "tsne":
+        tag_parts.append(opt.reducer)
     tag = "_".join(tag_parts)
+    reducer_label = "t-SNE" if opt.reducer == "tsne" else "UMAP"
 
     if opt.include_raw:
         features = raw_features(data)
-        embedding = tsne_fit(features, seed=opt.tsne_seed, perplexity=opt.perplexity, apply_pca=opt.apply_pca)
-        plot_tsne(
+        embedding = fit_embedding(
+            features,
+            reducer=opt.reducer,
+            seed=opt.tsne_seed,
+            perplexity=opt.perplexity,
+            apply_pca=opt.apply_pca,
+            umap_n_neighbors=opt.umap_n_neighbors,
+            umap_min_dist=opt.umap_min_dist,
+            umap_metric=opt.umap_metric,
+        )
+        plot_embedding(
             embedding,
             labels,
-            f"{opt.dataset_name} raw data t-SNE",
+            f"{opt.dataset_name} raw data {reducer_label}",
             os.path.join(opt.img_save_dir, f"{tag}_raw.png"),
+            reducer_label,
         )
 
     runs = []
@@ -374,12 +493,22 @@ def main():
             opt.batch_size,
             opt.feature_level,
         )
-        embedding = tsne_fit(features, seed=opt.tsne_seed, perplexity=opt.perplexity, apply_pca=opt.apply_pca)
-        plot_tsne(
+        embedding = fit_embedding(
+            features,
+            reducer=opt.reducer,
+            seed=opt.tsne_seed,
+            perplexity=opt.perplexity,
+            apply_pca=opt.apply_pca,
+            umap_n_neighbors=opt.umap_n_neighbors,
+            umap_min_dist=opt.umap_min_dist,
+            umap_metric=opt.umap_metric,
+        )
+        plot_embedding(
             embedding,
             model_labels,
-            f"{opt.dataset_name} {run_name} {opt.feature_level} t-SNE",
+            f"{opt.dataset_name} {run_name} {opt.feature_level} {reducer_label}",
             os.path.join(opt.img_save_dir, f"{tag}_{run_name}_{opt.feature_level}.png"),
+            reducer_label,
         )
 
 
