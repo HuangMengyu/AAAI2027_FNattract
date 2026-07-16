@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2026-4-117 -p alvis
+#SBATCH -A NAISS2025-22-1224 -p alvis
 #SBATCH -t 00:30:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A100:1
 #SBATCH --job-name=TFCC-test
-#SBATCH --output=logs_3modality/test/SleepEDFx_3_%A.out
+#SBATCH --output=logs_3modality/test_new10seed/SleepEDFx_3_%A.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -24,5 +24,5 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 python test.py \
     --dataset_name SleepEDFx_3 \
-    --baseline_checkpoint_path checkpoints_3modality/baseline_SleepEDFx_3 \
-    --checkpoint_path checkpoints_3modality/4000_4_200_warmup9_newmethod_pairwise_SleepEDFx_3
+    --baseline_checkpoint_path checkpoints_3modality/new10seed_baseline_SleepEDFx_3 \
+    --checkpoint_path checkpoints_3modality/new10seed_warmup7_SleepEDFx_3

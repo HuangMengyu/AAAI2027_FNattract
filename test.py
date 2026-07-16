@@ -92,6 +92,96 @@ def run_paired_ttest(a_scores, b_scores, alternative="greater"):
     }
 
 
+def run_corrected_repeated_kfold_ttest(
+    a_scores,
+    b_scores,
+    n_folds,
+    alternative="greater",
+    test_train_ratio=None,
+):
+    """Run the corrected repeated k-fold CV t-test of Bouckaert and Frank (2004).
+
+    ``a_scores`` and ``b_scores`` must contain the paired fold scores from all
+    repeats. For equal-sized k-fold cross-validation, the paper's n2 / n1 term
+    (test size / training size) is 1 / (k - 1). ``test_train_ratio`` can be
+    supplied when a different ratio is appropriate.
+
+    Reference: https://ml.cms.waikato.ac.nz/publications/2004/bouckaert-frank.pdf
+    """
+    a_scores = np.asarray(a_scores, dtype=float)
+    b_scores = np.asarray(b_scores, dtype=float)
+    if a_scores.shape != b_scores.shape:
+        raise ValueError(f"Paired scores must have the same shape, got {a_scores.shape} and {b_scores.shape}.")
+
+    if alternative not in ("greater", "less", "two-sided"):
+        raise ValueError(f"Unsupported alternative '{alternative}'. Use 'greater', 'less', or 'two-sided'.")
+
+    if isinstance(n_folds, (bool, np.bool_)) or not isinstance(n_folds, (int, np.integer)) or n_folds < 2:
+        raise ValueError(f"n_folds must be an integer of at least 2, got {n_folds!r}.")
+    n_folds = int(n_folds)
+
+    if test_train_ratio is None:
+        test_train_ratio = 1.0 / (n_folds - 1)
+    else:
+        try:
+            test_train_ratio = float(test_train_ratio)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"test_train_ratio must be a positive finite number, got {test_train_ratio!r}."
+            ) from exc
+        if not np.isfinite(test_train_ratio) or test_train_ratio <= 0:
+            raise ValueError(f"test_train_ratio must be a positive finite number, got {test_train_ratio!r}.")
+
+    valid_mask = np.isfinite(a_scores) & np.isfinite(b_scores)
+    diff = a_scores[valid_mask] - b_scores[valid_mask]
+    n = int(diff.size)
+    if n == 0 or n % n_folds != 0:
+        raise ValueError(
+            "The number of finite paired scores must be a positive multiple of "
+            f"n_folds={n_folds}, got {n}."
+        )
+
+    n_repeats = n // n_folds
+    mean_diff = float(np.mean(diff))
+    df = n - 1
+    variance_correction = (1.0 / n) + test_train_ratio
+
+    diff_variance = float(np.var(diff, ddof=1))
+    if np.allclose(diff, 0):
+        t_stat = 0.0
+        p_value = 1.0 if alternative == "two-sided" else 0.5
+        mean_diff = 0.0
+    elif np.isclose(diff_variance, 0.0):
+        t_stat = np.inf if mean_diff > 0 else -np.inf
+        if alternative == "greater":
+            p_value = student_t.sf(t_stat, df)
+        elif alternative == "less":
+            p_value = student_t.cdf(t_stat, df)
+        else:
+            p_value = 2 * student_t.sf(abs(t_stat), df)
+    else:
+        corrected_standard_error = np.sqrt(variance_correction * diff_variance)
+        t_stat = mean_diff / corrected_standard_error
+        if alternative == "greater":
+            p_value = student_t.sf(t_stat, df)
+        elif alternative == "less":
+            p_value = student_t.cdf(t_stat, df)
+        else:
+            p_value = 2 * student_t.sf(abs(t_stat), df)
+
+    return {
+        "n": n,
+        "n_folds": n_folds,
+        "n_repeats": n_repeats,
+        "mean_diff": mean_diff,
+        "t": float(t_stat),
+        "p": float(p_value),
+        "df": df,
+        "test_train_ratio": test_train_ratio,
+        "variance_correction": variance_correction,
+    }
+
+
 def run_wilcoxon_signed_rank(a_scores, b_scores, alternative="greater"):
     a_scores = np.array(a_scores, dtype=float)
     b_scores = np.array(b_scores, dtype=float)
@@ -261,7 +351,7 @@ def evaluate_checkpoint_root(
     }
 
 
-def run_pairwise_significance(results_by_checkpoint, alpha=0.05):
+def run_pairwise_significance(results_by_checkpoint, n_folds, alpha=0.05):
     checkpoint_names = list(results_by_checkpoint.keys())
     if len(checkpoint_names) < 2:
         print("Pairwise significance test skipped: at least two checkpoint paths are required.")
@@ -279,23 +369,49 @@ def run_pairwise_significance(results_by_checkpoint, alpha=0.05):
                     scores_a = results_by_checkpoint[name_a][score_level][metric]
                     scores_b = results_by_checkpoint[name_b][score_level][metric]
                     ttest_result = run_paired_ttest(scores_a, scores_b, alternative="greater")
+                    corrected_ttest_result = None
+                    if score_level == "fold_scores":
+                        corrected_ttest_result = run_corrected_repeated_kfold_ttest(
+                            scores_a,
+                            scores_b,
+                            n_folds=n_folds,
+                            alternative="greater",
+                        )
                     wilcoxon_result = run_wilcoxon_signed_rank(scores_a, scores_b, alternative="greater")
                     improved = ttest_result["mean_diff"] > 0
                     ttest_significant = bool(improved and np.isfinite(ttest_result["p"]) and ttest_result["p"] < alpha)
+                    corrected_ttest_significant = bool(
+                        corrected_ttest_result is not None
+                        and improved
+                        and np.isfinite(corrected_ttest_result["p"])
+                        and corrected_ttest_result["p"] < alpha
+                    )
                     wilcoxon_significant = bool(improved and np.isfinite(wilcoxon_result["p"]) and wilcoxon_result["p"] < alpha)
                     mean_a = float(np.mean(scores_a))
                     mean_b = float(np.mean(scores_b))
-                    print(
+                    result_line = (
                         f"{name_a} vs {name_b} | {metric} | n={ttest_result['n']} | "
                         f"mean_a={mean_a:.4f} | mean_b={mean_b:.4f} | "
                         f"diff={ttest_result['mean_diff']:.4f} | "
                         f"t={ttest_result['t']:.4f} | t_p_greater={ttest_result['p']:.6f} | "
-                        f"t_significant={ttest_significant} | "
+                        f"t_significant={ttest_significant}"
+                    )
+                    if corrected_ttest_result is not None:
+                        result_line += (
+                            f" | corrected_t={corrected_ttest_result['t']:.4f} | "
+                            f"corrected_t_p_greater={corrected_ttest_result['p']:.6f} | "
+                            f"corrected_t_significant={corrected_ttest_significant} | "
+                            f"corrected_t_k={corrected_ttest_result['n_folds']} | "
+                            f"corrected_t_r={corrected_ttest_result['n_repeats']}"
+                        )
+                    result_line += (
+                        " | "
                         f"wilcoxon_n={wilcoxon_result['n']} | "
                         f"wilcoxon_W={wilcoxon_result['statistic']:.4f} | "
                         f"wilcoxon_p_greater={wilcoxon_result['p']:.6f} | "
                         f"wilcoxon_significant={wilcoxon_significant}"
                     )
+                    print(result_line)
                     
 
 def str2bool(v):
@@ -315,7 +431,7 @@ def main():
     in_parser.add_argument('--dataset_name', type=str, default='SleepEDFx', help='dataset name')
     in_parser.add_argument('--checkpoint_path', type=str, default='', help='checkpoint path for one model checkpoint root')
     in_parser.add_argument('--checkpoint_name', type=str, default=None, help='optional display name for --checkpoint_path')
-    in_parser.add_argument('--baseline_checkpoint_path', type=str, default=None, help='optional baseline checkpoint root for paired t-test')
+    in_parser.add_argument('--baseline_checkpoint_path', type=str, default=None, help='optional baseline checkpoint root for paired significance tests')
     in_parser.add_argument('--baseline_checkpoint_name', type=str, default=None, help='optional display name for --baseline_checkpoint_path')
     in_parser.add_argument('--seeds', nargs='*', type=int, default=[0, 20, 40], help='seed folders to evaluate')
     in_parser.add_argument('--batch_size', type=int, default=100, help='batch size for testing')
@@ -327,7 +443,9 @@ def main():
     if opt.dataset_name == 'SleepEDFx_3' or opt.dataset_name == 'PAMAP2_3':
         print("Using 3-modality input for dataset:", opt.dataset_name)
         # opt.seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
-        opt.seeds = [0, 20, 42, 60, 80]
+        # opt.seeds = [0, 20, 42, 60, 80]
+        # opt.seeds = [0, 1, 2, 3, 4]
+        opt.seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9]
     print(opt.seeds)
     
     checkpoint_specs = resolve_checkpoint_specs(opt)
@@ -409,7 +527,7 @@ def main():
         )
 
     if opt.baseline_checkpoint_path:
-        run_pairwise_significance(results_by_checkpoint, alpha=opt.significance_alpha)
+        run_pairwise_significance(results_by_checkpoint, n_folds=num_folds, alpha=opt.significance_alpha)
 
 
 

@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import time
 
 import numpy as np
 import torch
@@ -936,6 +937,8 @@ def build_magnitude_prior(
         raise ValueError(f"Unsupported prior_delta_mode: {prior_delta_mode}")
     if three_mod_contrast not in ["pairwise", "1vsall"]:
         raise ValueError(f"Unsupported three_mod_contrast: {three_mod_contrast}")
+
+    feature_compute_start = time.perf_counter()
     rng = np.random.RandomState(seed)
     modality_features = extract_magnitude_features(
         data,
@@ -988,9 +991,16 @@ def build_magnitude_prior(
     else:
         raise ValueError(f"Unsupported prior_mode: {prior_mode}")
 
+    feature_compute_time = time.perf_counter() - feature_compute_start
+    total_compute_time = feature_compute_time
+    total_fit_time = 0.0
+    fit_label = prior_model.upper()
+    print(f"Prior timing [feature preparation]: compute={feature_compute_time:.3f}s")
+
     bmm = {}
     plot_paths = {}
     for name, features, granularity in feature_sets:
+        prior_compute_start = time.perf_counter()
         if granularity == "sample":
             prior_values, distance_scale = collect_sample_prior_values(
                 features,
@@ -1007,6 +1017,9 @@ def build_magnitude_prior(
                 rng,
                 metric=prior_gmm_metric,
             )
+        prior_compute_time = time.perf_counter() - prior_compute_start
+
+        fit_start = time.perf_counter()
         bmm[name] = fit_distance_mixture(
             prior_values,
             distance_scale,
@@ -1014,7 +1027,15 @@ def build_magnitude_prior(
             max_iter=prior_fit_max_iter,
             metric=prior_gmm_metric,
         )
+        fit_time = time.perf_counter() - fit_start
+        total_compute_time += prior_compute_time
+        total_fit_time += fit_time
+
         print_mixture_fit_result(name, bmm[name])
+        print(
+            f"Prior timing [{name}]: compute={prior_compute_time:.3f}s, "
+            f"{fit_label} fit={fit_time:.3f}s, total={prior_compute_time + fit_time:.3f}s"
+        )
         if plot and np.asarray(prior_values).ndim == 1:
             plot_paths[name] = save_mixture_fit_plot(
                 name,
@@ -1025,6 +1046,11 @@ def build_magnitude_prior(
             )
         elif plot:
             print(f"Skipping prior fit plot [{name}] for multidimensional metric={prior_gmm_metric}")
+
+    print(
+        f"Prior timing [total]: compute={total_compute_time:.3f}s, "
+        f"{fit_label} fit={total_fit_time:.3f}s, total={total_compute_time + total_fit_time:.3f}s"
+    )
 
     return {
         **{

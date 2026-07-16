@@ -329,7 +329,10 @@ if __name__ == '__main__':
     if opt.dataset_name == 'SleepEDFx_3' or opt.dataset_name == 'PAMAP2_3':
         print("Using 3-modality input for dataset:", opt.dataset_name)
         # seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
-        seeds = [0, 20, 42, 60, 80]
+        # seeds = [0, 20, 42, 60, 80]
+        # seeds = [0, 1, 2, 3, 4]
+        seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9]
+        seeds = seeds[5:] 
     else:
         seeds = opt.seeds  # use 3 seeds
     print(seeds)

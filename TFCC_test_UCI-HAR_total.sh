@@ -2,9 +2,9 @@
 #SBATCH -A NAISS2026-4-117 -p alvis
 #SBATCH -t 00:30:00
 #SBATCH --ntasks=1
-#SBATCH --gpus-per-node=A40:1
+#SBATCH --gpus-per-node=T4:1
 #SBATCH --job-name=TFCC-test
-#SBATCH --output=logs/test/UCI-HAR_total_%A.out
+#SBATCH --output=logs/test_new_ttest/UCI-HAR_total_%A.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -28,4 +28,4 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 python test.py \
     --dataset_name UCI-HAR_total \
     --baseline_checkpoint_path checkpoints_baseline_best/baseline_UCI-HAR_total  \
-    --checkpoint_path checkpoints_fn_analysis/warmup1_bmm_UCI-HAR_total \
+    --checkpoint_path checkpoints_baseline_best/warmup1_UCI-HAR_total \

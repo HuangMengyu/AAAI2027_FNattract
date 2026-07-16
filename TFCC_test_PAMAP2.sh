@@ -2,9 +2,9 @@
 #SBATCH -A NAISS2026-4-117 -p alvis
 #SBATCH -t 00:30:00
 #SBATCH --ntasks=1
-#SBATCH --gpus-per-node=A40:1
+#SBATCH --gpus-per-node=T4:1
 #SBATCH --job-name=TFCC-test
-#SBATCH --output=logs/test/PAMAP2_%A.out
+#SBATCH --output=logs/test_new_ttest/PAMAP2_%A.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -28,4 +28,4 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 python test.py \
     --dataset_name PAMAP2 \
     --baseline_checkpoint_path checkpoints_baseline_best/baseline_PAMAP2  \
-    --checkpoint_path checkpoints_fn_analysis/warmup1_maxiter200_bmm_PAMAP2  \
+    --checkpoint_path checkpoints_baseline_best/maxiter200_warmup1_PAMAP2  \

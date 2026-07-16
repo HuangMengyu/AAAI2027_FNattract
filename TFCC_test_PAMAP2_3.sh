@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=TFCC-test
-#SBATCH --output=logs_3modality/test_5seed/PAMAP2_3_%A.out
+#SBATCH --output=logs_3modality/test_new10seed/PAMAP2_3_%A.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -24,5 +24,5 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 python test.py \
     --dataset_name PAMAP2_3 \
-    --baseline_checkpoint_path checkpoints_3modality/5seeds_baseline_PAMAP2_3 \
-    --checkpoint_path checkpoints_3modality/5seeds_newmethod_warmup1_200iter_PAMAP2_3
+    --baseline_checkpoint_path checkpoints_3modality/new10seeds_baseline_PAMAP2_3 \
+    --checkpoint_path checkpoints_3modality/new10seeds_warmup1_iter200_PAMAP2_3

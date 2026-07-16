@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-22-1224 -p alvis
-#SBATCH -t 03:30:00
+#SBATCH -t 06:00:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=SleepEDFx_3
-#SBATCH --array=1-5
-#SBATCH --output=logs_3modality/SleepEDFx_3_2/4000_4_200_warmup9_newmethod_pairwise_SleepEDFx_3_%A_%a.out
+#SBATCH --array=3-5
+#SBATCH --output=logs_3modality/SleepEDFx_3_new10seed/warmup7_SleepEDFx_3_%A_%a.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -38,10 +38,10 @@ python -u main_5fold.py \
     --dataset_name SleepEDFx_3 \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
     --epochs 10 \
-    --warm_epochs 9 \
+    --warm_epochs 7 \
     --adaptive_warmup_threshold 0.035 \
     --three_mod_contrast pairwise \
-    --model_save_path checkpoints_3modality/4000_4_200_warmup9_newmethod_pairwise_SleepEDFx_3 \
+    --model_save_path checkpoints_3modality/new10seed_warmup7_SleepEDFx_3 \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -61,5 +61,5 @@ python -u main_5fold.py \
     --prior_delta_mode concat \
     --prior_fit_max_iter 200 \
     --prior_segment_len 4
-
+# only first 5 seeds to make up for first
     
