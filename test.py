@@ -442,10 +442,19 @@ def main():
     
     if opt.dataset_name == 'SleepEDFx_3' or opt.dataset_name == 'PAMAP2_3':
         print("Using 3-modality input for dataset:", opt.dataset_name)
-        # opt.seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
-        # opt.seeds = [0, 20, 42, 60, 80]
-        # opt.seeds = [0, 1, 2, 3, 4]
-        opt.seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9]
+        # seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
+        # seeds = [0, 20, 42, 60, 80]
+        # seeds = [0, 1, 2, 3, 4]
+        opt.seeds = [0, 20, 40, 1, 2, 4, 6, 3, 5, 7, 8]
+        opt.seeds = opt.seeds[0:10]
+    
+    else:
+        # seeds = opt.seeds  # use 3 seeds
+        # opt.seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9]
+        # opt.seeds = [0, 20, 40, 42, 60, 66, 80, 100]
+        # opt.seeds = [0, 20, 40, 1, 2, 4, 6, 3, 5, 7, 8]
+        opt.seeds = [0, 20, 40, 42, 60, 66, 3, 4, 5, 6]
+        opt.seeds = opt.seeds[0:10]  # use first 5 seeds
     print(opt.seeds)
     
     checkpoint_specs = resolve_checkpoint_specs(opt)

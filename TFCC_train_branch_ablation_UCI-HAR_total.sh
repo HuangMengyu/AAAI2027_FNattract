@@ -29,6 +29,7 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
 # mkdir -p logs_branch_ablation/UCI-HAR_total
+# Disabled: --use_intra_sample_for_temporal_filter is obsolete; temporal filter uses temporal classifiers and priors.
 srun --output="logs_branch_ablation/UCI-HAR_total/warmup1_${filter_temporal}_${filter_intra}_${filter_inter}_UCI-HAR_total_%A_%a.out" \
 python main_5fold.py \
     --dataset_name UCI-HAR_total \
@@ -51,7 +52,6 @@ python main_5fold.py \
     --intra_binary_mode binary \
     --inter_binary_mode binary \
     --prior_gmm_metric cosine \
-    --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \
@@ -59,4 +59,3 @@ python main_5fold.py \
     --prior_delta_mode concat \
     --prior_fit_max_iter 200 \
     --prior_segment_len 4
-

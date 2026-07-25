@@ -29,6 +29,7 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
 srun --output="logs_binary_prior/SleepEDFx/4000_4_warmup4_Binary${fn_filter_use_binary}_Prior${fn_filter_use_prior}_SleepEDFx_%A_%a.out" \
+# Disabled: --use_intra_sample_for_temporal_filter is obsolete; temporal filter uses temporal classifiers and priors.
 python -u main_5fold.py \
     --dataset_name SleepEDFx \
     --current_num_fold ${current_num_fold} \
@@ -49,7 +50,6 @@ python -u main_5fold.py \
     --intra_binary_mode binary \
     --inter_binary_mode binary \
     --prior_gmm_metric cosine \
-    --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \

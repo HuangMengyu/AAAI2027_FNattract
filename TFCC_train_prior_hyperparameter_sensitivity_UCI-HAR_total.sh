@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2025-22-1224 -p alvis
+#SBATCH -A NAISS2026-4-351 -p alvis
 #SBATCH -t 00:30:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
-#SBATCH --job-name=warmup_ablation_UCI-HAR_total
-#SBATCH --array=4-5
+#SBATCH --job-name=prior_sensitivity_UCI-HAR
+#SBATCH --array=27-28
 
-input_file='/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027/warm_epochs_ablation_5fold.txt'
-# Load parameters safely
+input_file='/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027/prior_hyperparameter_sensitivity_5fold.txt'
 source <(sed -n "${SLURM_ARRAY_TASK_ID}p" "$input_file")
 
 module purge
@@ -15,28 +14,26 @@ module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
 module load scikit-learn/1.4.2-gfbf-2023a
 module load einops/0.7.0-GCCcore-12.3.0
 
-# echo "cut_off=${cut_off} attract_filter=${attract_filter}"
 echo "Running on node: $SLURMD_NODENAME"
 
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
-
 export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 
-# cd /cephyr/users/mengyuh/Alvis/ComparativeStudy/Codes/Codes/Collection
 cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
-# mkdir -p $TMPDIR/TFCC_multimodal
-# For Testing:
-srun --output="logs_warmup_ablation/UCI-HAR_total/warmup${warm_epochs}_UCI-HAR_total_%A_%a.out" \
-# Disabled: --use_intra_sample_for_temporal_filter is obsolete; temporal filter uses temporal classifiers and priors.
+log_dir='logs_prior_hyperparameter_sensitivity/UCI-HAR_total'
+checkpoint_path="checkpoints/prior_hyperparameter_sensitivity/warmup1_${sensitivity_setup}_pairs${prior_num_random_pairs}_iter${prior_fit_max_iter}_seg${prior_segment_len}_UCI-HAR_total"
+mkdir -p "$log_dir"
+
+srun --output="${log_dir}/warmup1_${sensitivity_setup}_pairs${prior_num_random_pairs}_iter${prior_fit_max_iter}_seg${prior_segment_len}_UCI-HAR_total_%A_%a.out" \
 python -u main_5fold.py \
     --dataset_name UCI-HAR_total \
-    --current_num_fold ${current_num_fold} \
+    --current_num_fold "${current_num_fold}" \
     --epochs 10 \
-    --warm_epochs ${warm_epochs} \
-    --fn_filter_use_prior False \
-    --model_save_path checkpoints/warmup_ablation/no_prior_warmup${warm_epochs}_UCI-HAR_total \
+    --warm_epochs 1 \
+    --adaptive_warmup_threshold 0.35 \
+    --model_save_path "$checkpoint_path" \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -50,9 +47,8 @@ python -u main_5fold.py \
     --prior_gmm_metric cosine \
     --prior_cancel_weighting False \
     --prior_hard_neg_weight 1.0 \
-    --prior_num_random_pairs 4000 \
+    --prior_num_random_pairs "${prior_num_random_pairs}" \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
-    --prior_fit_max_iter 200 \
-    --prior_segment_len 4 \
-    --fn_analysis True \
+    --prior_fit_max_iter "${prior_fit_max_iter}" \
+    --prior_segment_len "${prior_segment_len}"

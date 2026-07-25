@@ -1,5 +1,7 @@
 import numpy as np
 import functools
+import time
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -16,13 +18,75 @@ from models.filter_stats import (
 from models.prior_bmm import (
     prepare_prior_for_torch,
     prior_positive_probability_matrix,
-    similarity_bmm_probability_matrix,
+    # similarity_bmm_probability_matrix,  # Disabled: binary-to-BMM replacement.
 )
 
 import torch.optim as optim
 
 from tqdm import trange
 from scipy.stats import norm
+
+
+class ComponentTimer:
+    """Accumulate component execution time without changing training semantics."""
+
+    def __init__(self, device, enabled=True):
+        self.device = torch.device(device)
+        self.enabled = bool(enabled)
+        self.use_cuda_events = self.enabled and self.device.type == "cuda" and torch.cuda.is_available()
+        self.records = defaultdict(list)
+        self.cuda_totals = defaultdict(float)
+        self.cpu_totals = defaultdict(float)
+        self.pending_cuda_ranges = 0
+        self.max_pending_cuda_ranges = 4096
+
+    def start(self):
+        if not self.enabled:
+            return None
+        if self.use_cuda_events:
+            event = torch.cuda.Event(enable_timing=True)
+            event.record()
+            return event
+        return time.perf_counter()
+
+    def stop(self, name, start):
+        if start is None:
+            return
+        if self.use_cuda_events:
+            end = torch.cuda.Event(enable_timing=True)
+            end.record()
+            self.records[name].append((start, end))
+            self.pending_cuda_ranges += 1
+            if self.pending_cuda_ranges >= self.max_pending_cuda_ranges:
+                self._flush_cuda_records()
+        else:
+            self.cpu_totals[name] += time.perf_counter() - start
+
+    def _flush_cuda_records(self):
+        if not self.records:
+            return
+        torch.cuda.synchronize(self.device)
+        for name, event_pairs in self.records.items():
+            self.cuda_totals[name] += sum(
+                start.elapsed_time(end) for start, end in event_pairs
+            ) / 1000.0
+        self.records.clear()
+        self.pending_cuda_ranges = 0
+
+    def totals(self, reset=True):
+        if not self.enabled:
+            return {}
+        totals = dict(self.cpu_totals)
+        if self.use_cuda_events:
+            self._flush_cuda_records()
+            for name, value in self.cuda_totals.items():
+                totals[name] = totals.get(name, 0.0) + value
+        if reset:
+            self.records.clear()
+            self.cuda_totals.clear()
+            self.cpu_totals.clear()
+            self.pending_cuda_ranges = 0
+        return totals
 
 
 
@@ -104,11 +168,11 @@ class TFCC(nn.Module):
         prior_info=None,
         prior_hard_neg_weight=1.0,
         prior_cancel_weighting=True,
-        replace_binary_with_bmm=False,
+        # replace_binary_with_bmm=False,  # Disabled: final method uses binary classifiers.
         temporal_binary_mode=None,
         intra_binary_mode=None,
         inter_binary_mode=None,
-        use_intra_sample_for_temporal_filter=False,
+        # use_intra_sample_for_temporal_filter=False,  # Disabled: temporal filtering uses temporal classifiers/priors.
         pretrain_labels=None,
         contrast_mode="pairwise",
         fn_analysis=False,
@@ -116,6 +180,7 @@ class TFCC(nn.Module):
         fn_analysis_every=1,
         fn_analysis_threshold=0.5,
         fn_analysis_context=None,
+        log_component_timing=True,
         ):
         super(TFCC, self).__init__()
         self.EEG_encoder = EEG_encoder
@@ -253,11 +318,11 @@ class TFCC(nn.Module):
         self.prior_mode = self.prior["metadata"].get("prior_mode", "combined") if self.prior is not None else "combined"
         self.prior_hard_neg_weight = prior_hard_neg_weight
         self.prior_cancel_weighting = prior_cancel_weighting
-        self.replace_binary_with_bmm = replace_binary_with_bmm
-        self.temporal_binary_mode = self.normalize_binary_mode(temporal_binary_mode, replace_binary_with_bmm)
-        self.intra_binary_mode = self.normalize_binary_mode(intra_binary_mode, replace_binary_with_bmm)
-        self.inter_binary_mode = self.normalize_binary_mode(inter_binary_mode, replace_binary_with_bmm)
-        self.use_intra_sample_for_temporal_filter = use_intra_sample_for_temporal_filter
+        # self.replace_binary_with_bmm = replace_binary_with_bmm
+        self.temporal_binary_mode = self.normalize_binary_mode(temporal_binary_mode)
+        self.intra_binary_mode = self.normalize_binary_mode(intra_binary_mode)
+        self.inter_binary_mode = self.normalize_binary_mode(inter_binary_mode)
+        # self.use_intra_sample_for_temporal_filter = use_intra_sample_for_temporal_filter
         self.pretrain_labels = torch.tensor(pretrain_labels, dtype=torch.long) if pretrain_labels is not None else None
         self.fn_analysis = fn_analysis
         self.fn_analysis_dir = fn_analysis_dir
@@ -266,6 +331,8 @@ class TFCC(nn.Module):
         self.fn_analysis_context = fn_analysis_context or {}
         self.fn_analysis_attraction_rows = []
         self.fn_analysis_overlap_rows = []
+        self.log_component_timing = bool(log_component_timing)
+        self.component_timer = ComponentTimer(self.device, enabled=self.log_component_timing)
 
         self.scope_variable = 0 if self.adaptive_warmup else self.warm_epochs / self.num_epochs
 
@@ -295,22 +362,25 @@ class TFCC(nn.Module):
     def _stats_key(self, branch_key):
         return f"inter:{branch_key}"
 
-    def normalize_binary_mode(self, mode, replace_binary_with_bmm):
+    def normalize_binary_mode(self, mode):
         if mode is None:
-            return "bmm" if replace_binary_with_bmm else "binary"
+            # return "bmm" if replace_binary_with_bmm else "binary"
+            return "binary"
         mode = mode.lower()
-        if mode not in ("binary", "bmm"):
+        # if mode not in ("binary", "bmm"):
+        if mode != "binary":
             raise ValueError(f"Unsupported binary mode: {mode}")
         return mode
 
-    def branch_uses_bmm(self, branch):
-        if branch == "temporal":
-            return self.temporal_binary_mode == "bmm"
-        if branch == "intra":
-            return self.intra_binary_mode == "bmm"
-        if branch == "inter":
-            return self.inter_binary_mode == "bmm"
-        raise ValueError(f"Unsupported branch: {branch}")
+    # Disabled: branches can no longer replace their binary classifier with a BMM.
+    # def branch_uses_bmm(self, branch):
+    #     if branch == "temporal":
+    #         return self.temporal_binary_mode == "bmm"
+    #     if branch == "intra":
+    #         return self.intra_binary_mode == "bmm"
+    #     if branch == "inter":
+    #         return self.inter_binary_mode == "bmm"
+    #     raise ValueError(f"Unsupported branch: {branch}")
 
     def should_filter_epoch(self, epoch):
         if self.adaptive_warmup:
@@ -424,12 +494,13 @@ class TFCC(nn.Module):
         ), dim=1)
         return torch.sigmoid(binary_classifier(binary_input)).reshape(batch_size, batch_size)
 
-    def make_sample_bmm_matrix(self, left, right):
-        batch_size = left.shape[0]
-        left = F.normalize(left.reshape(batch_size, -1), dim=1)
-        right = F.normalize(right.reshape(batch_size, -1), dim=1)
-        similarity = torch.mm(left, right.t())
-        return similarity_bmm_probability_matrix(similarity)
+    # Disabled: sample decisions always use the trained binary classifier.
+    # def make_sample_bmm_matrix(self, left, right):
+    #     batch_size = left.shape[0]
+    #     left = F.normalize(left.reshape(batch_size, -1), dim=1)
+    #     right = F.normalize(right.reshape(batch_size, -1), dim=1)
+    #     similarity = torch.mm(left, right.t())
+    #     return similarity_bmm_probability_matrix(similarity)
 
     def sample_branch_decision(
         self,
@@ -438,12 +509,12 @@ class TFCC(nn.Module):
         binary_classifier,
         prior_features=None,
         prior_bmm=None,
-        use_bmm=False,
+        # use_bmm=False,  # Disabled: sample decisions use the binary classifier.
     ):
-        if use_bmm:
-            binary_output = self.make_sample_bmm_matrix(left, right)
-        else:
-            binary_output = self.make_sample_binary_matrix(left, right, binary_classifier)
+        # if use_bmm:
+        #     binary_output = self.make_sample_bmm_matrix(left, right)
+        # else:
+        binary_output = self.make_sample_binary_matrix(left, right, binary_classifier)
         branch_prob = binary_output
         branch_decision = binary_output > 0.5
         if prior_features is not None and prior_bmm is not None:
@@ -453,76 +524,76 @@ class TFCC(nn.Module):
             branch_prob = torch.minimum(binary_output, prior_prob)
         return branch_decision, branch_prob
 
-    def build_intra_sample_temporal_filter(
-        self,
-        EEG_feat,
-        EEG_aug_feat,
-        EOG_feat,
-        EOG_aug_feat,
-        mod1_prior,
-        mod2_prior,
-        mod1_sample_prior_bmm,
-        mod2_sample_prior_bmm,
-    ):
-        modules = [
-            self.EEG_contrasting,
-            self.EOG_contrasting,
-            self.intra_binary,
-        ]
-        states = self.set_modules_eval(modules)
-        try:
-            with torch.no_grad():
-                _, c_T = self.EEG_contrasting.project_full(EEG_feat)
-                _, c_T_aug = self.EEG_contrasting.project_full(EEG_aug_feat)
-                _, c_F = self.EOG_contrasting.project_full(EOG_feat)
-                _, c_F_aug = self.EOG_contrasting.project_full(EOG_aug_feat)
-
-                mod1_decision, mod1_weight = self.sample_branch_decision(
-                    c_T,
-                    c_T_aug,
-                    self.intra_binary,
-                    prior_features=mod1_prior,
-                    prior_bmm=mod1_sample_prior_bmm,
-                    use_bmm=self.branch_uses_bmm("intra"),
-                )
-                mod1_aug_decision, mod1_aug_weight = self.sample_branch_decision(
-                    c_T_aug,
-                    c_T,
-                    self.intra_binary,
-                    prior_features=mod1_prior,
-                    prior_bmm=mod1_sample_prior_bmm,
-                    use_bmm=self.branch_uses_bmm("intra"),
-                )
-                mod2_decision, mod2_weight = self.sample_branch_decision(
-                    c_F,
-                    c_F_aug,
-                    self.intra_binary,
-                    prior_features=mod2_prior,
-                    prior_bmm=mod2_sample_prior_bmm,
-                    use_bmm=self.branch_uses_bmm("intra"),
-                )
-                mod2_aug_decision, mod2_aug_weight = self.sample_branch_decision(
-                    c_F_aug,
-                    c_F,
-                    self.intra_binary,
-                    prior_features=mod2_prior,
-                    prior_bmm=mod2_sample_prior_bmm,
-                    use_bmm=self.branch_uses_bmm("intra"),
-                )
-        finally:
-            self.restore_module_states(modules, states)
-
-        return {
-            "mod1_decision": mod1_decision.detach(),
-            "mod1_weight": mod1_weight.detach(),
-            "mod1_aug_decision": mod1_aug_decision.detach(),
-            "mod1_aug_weight": mod1_aug_weight.detach(),
-            "mod2_decision": mod2_decision.detach(),
-            "mod2_weight": mod2_weight.detach(),
-            "mod2_aug_decision": mod2_aug_decision.detach(),
-            "mod2_aug_weight": mod2_aug_weight.detach(),
-        }
-
+#    def build_intra_sample_temporal_filter(
+#        self,
+#        EEG_feat,
+#        EEG_aug_feat,
+#        EOG_feat,
+#        EOG_aug_feat,
+#        mod1_prior,
+#        mod2_prior,
+#        mod1_sample_prior_bmm,
+#        mod2_sample_prior_bmm,
+#    ):
+#        modules = [
+#            self.EEG_contrasting,
+#            self.EOG_contrasting,
+#            self.intra_binary,
+#        ]
+#        states = self.set_modules_eval(modules)
+#        try:
+#            with torch.no_grad():
+#                _, c_T = self.EEG_contrasting.project_full(EEG_feat)
+#                _, c_T_aug = self.EEG_contrasting.project_full(EEG_aug_feat)
+#                _, c_F = self.EOG_contrasting.project_full(EOG_feat)
+#                _, c_F_aug = self.EOG_contrasting.project_full(EOG_aug_feat)
+#
+#                mod1_decision, mod1_weight = self.sample_branch_decision(
+#                    c_T,
+#                    c_T_aug,
+#                    self.intra_binary,
+#                    prior_features=mod1_prior,
+#                    prior_bmm=mod1_sample_prior_bmm,
+#                    # use_bmm=self.branch_uses_bmm("intra"),
+#                )
+#                mod1_aug_decision, mod1_aug_weight = self.sample_branch_decision(
+#                    c_T_aug,
+#                    c_T,
+#                    self.intra_binary,
+#                    prior_features=mod1_prior,
+#                    prior_bmm=mod1_sample_prior_bmm,
+#                    # use_bmm=self.branch_uses_bmm("intra"),
+#                )
+#                mod2_decision, mod2_weight = self.sample_branch_decision(
+#                    c_F,
+#                    c_F_aug,
+#                    self.intra_binary,
+#                    prior_features=mod2_prior,
+#                    prior_bmm=mod2_sample_prior_bmm,
+#                    # use_bmm=self.branch_uses_bmm("intra"),
+#                )
+#                mod2_aug_decision, mod2_aug_weight = self.sample_branch_decision(
+#                    c_F_aug,
+#                    c_F,
+#                    self.intra_binary,
+#                    prior_features=mod2_prior,
+#                    prior_bmm=mod2_sample_prior_bmm,
+#                    # use_bmm=self.branch_uses_bmm("intra"),
+#                )
+#        finally:
+#            self.restore_module_states(modules, states)
+#
+#        return {
+#            "mod1_decision": mod1_decision.detach(),
+#            "mod1_weight": mod1_weight.detach(),
+#            "mod1_aug_decision": mod1_aug_decision.detach(),
+#            "mod1_aug_weight": mod1_aug_weight.detach(),
+#            "mod2_decision": mod2_decision.detach(),
+#            "mod2_weight": mod2_weight.detach(),
+#            "mod2_aug_decision": mod2_aug_decision.detach(),
+#            "mod2_aug_weight": mod2_aug_weight.detach(),
+#        }
+#
     def print_filter_stats(self, epoch, filter_stats):
         if not filter_stats:
             print(f"Filter stats epoch {epoch + 1}: no filtering applied")
@@ -556,7 +627,7 @@ class TFCC(nn.Module):
                     f" | binary>0.5={stats.get('binary_gt_05', 0) / pairs:.4f} | "
                     f"prior_candidates={prior_candidates / pairs:.4f} | "
                     f"prior_attract={stats.get('prior_attract', 0) / pairs:.4f} | "
-                    f"prior_hard_neg={stats.get('prior_hard_neg', 0) / pairs:.4f} | "
+                    # f"prior_hard_neg={stats.get('prior_hard_neg', 0) / pairs:.4f} | "
                     f"prior_mean={prior_prob_mean:.4f} | "
                     f"prior_std={prior_prob_std:.4f} | "
                     f"prior>0.5={stats.get('prior_gt_05', 0) / max(prior_candidates, 1):.4f}"
@@ -596,9 +667,9 @@ class TFCC(nn.Module):
                 f"calls={stats['calls']} | "
                 f"FN={stats['fn'] / pairs:.4f} | "
                 f"attract={stats['attract'] / pairs:.4f} | "
-                f"cancel={stats['cancel'] / pairs:.4f} | "
-                f"cancel_count={stats['cancel']} | "
-                f"hard_neg_count={stats.get('prior_hard_neg', 0)} | "
+                # f"cancel={stats['cancel'] / pairs:.4f} | "
+                # f"cancel_count={stats['cancel']} | "
+                # f"hard_neg_count={stats.get('prior_hard_neg', 0)} | "
                 f"binary_mean={prob_mean:.4f} | "
                 f"binary_std={prob_std:.4f} | "
                 f"p>0.9={stats['gt_09'] / pairs:.4f} | "
@@ -617,6 +688,9 @@ class TFCC(nn.Module):
         
         pbar = trange(self.num_epochs)
         for e in pbar:
+            if self.log_component_timing and self.component_timer.use_cuda_events:
+                torch.cuda.synchronize(self.device)
+            epoch_wall_start = time.perf_counter()
             epoch_losses = []
             epoch_binary_losses = []
             filter_active = self.should_filter_epoch(e)
@@ -648,9 +722,30 @@ class TFCC(nn.Module):
 
                     epoch_binary_losses.append(float(L_binary))
                     if self.uses_any_binary_classifier():
+                        binary_backward_timing_start = self.component_timer.start()
                         self.binary_optimizer.zero_grad()
                         L_binary.backward()
                         self.binary_optimizer.step()
+                        self.component_timer.stop("binary_backward_step", binary_backward_timing_start)
+
+            epoch_component_times = self.component_timer.totals(reset=True)
+            epoch_wall_time = time.perf_counter() - epoch_wall_start
+            if self.log_component_timing:
+                binary_pair_time = epoch_component_times.get("binary_pair_build", 0.0)
+                binary_forward_time = epoch_component_times.get("binary_loss_forward", 0.0)
+                binary_backward_time = epoch_component_times.get("binary_backward_step", 0.0)
+                binary_training_time = binary_pair_time + binary_forward_time + binary_backward_time
+                filtering_time = epoch_component_times.get("fn_filtering", 0.0)
+                timing_source = "CUDA-event GPU time" if self.component_timer.use_cuda_events else "wall time"
+                print(
+                    f"Component timing epoch {e + 1} [{timing_source}, filter_active={filter_active}]: "
+                    f"binary_pair_build={binary_pair_time:.3f}s | "
+                    f"binary_loss_forward={binary_forward_time:.3f}s | "
+                    f"binary_backward_step={binary_backward_time:.3f}s | "
+                    f"binary_training_total={binary_training_time:.3f}s | "
+                    f"fn_filtering={filtering_time:.3f}s | "
+                    f"epoch_wall={epoch_wall_time:.3f}s"
+                )
 
             self.scheduler.step(e)
             if not epoch_losses:
@@ -751,7 +846,7 @@ class TFCC(nn.Module):
             sample_prior_bmms = [combined_sample_prior_bmm for _ in range(num_modalities)]
             segment_prior_bmms = [combined_segment_prior_bmm for _ in range(num_modalities)]
 
-        temporal_replace_binary_with_bmm = self.branch_uses_bmm("temporal")
+        # temporal_replace_binary_with_bmm = self.branch_uses_bmm("temporal")
         temporal_prior_is_segment = True
 
         temporal_losses = []
@@ -779,7 +874,8 @@ class TFCC(nn.Module):
                 prior_cancel_weighting=self.prior_cancel_weighting,
                 prior_is_segment=temporal_prior_is_segment,
                 labels=batch_labels,
-                replace_binary_with_bmm=temporal_replace_binary_with_bmm,
+                # replace_binary_with_bmm=temporal_replace_binary_with_bmm,
+                timing_recorder=self.component_timer,
             )
             loss_backward, _, c_aug, pairs_aug, labels_aug = contrast_module(
                 augmented_feature,
@@ -798,7 +894,8 @@ class TFCC(nn.Module):
                 prior_cancel_weighting=self.prior_cancel_weighting,
                 prior_is_segment=temporal_prior_is_segment,
                 labels=batch_labels,
-                replace_binary_with_bmm=temporal_replace_binary_with_bmm,
+                # replace_binary_with_bmm=temporal_replace_binary_with_bmm,
+                timing_recorder=self.component_timer,
             )
             temporal_losses.extend([loss_forward, loss_backward])
             temporal_binary_items.extend([
@@ -828,11 +925,14 @@ class TFCC(nn.Module):
                 prior_hard_neg_weight=self.prior_hard_neg_weight,
                 prior_cancel_weighting=self.prior_cancel_weighting,
                 labels=batch_labels,
-                replace_binary_with_bmm=self.branch_uses_bmm("intra"),
+                # replace_binary_with_bmm=self.branch_uses_bmm("intra"),
+                timing_recorder=self.component_timer,
             )
             intra_losses.append(loss_intra)
             if self.intra_binary_mode == "binary":
+                binary_pair_timing_start = self.component_timer.start()
                 pairs, labels = self.form_binary_loss_data(c, c_aug)
+                self.component_timer.stop("binary_pair_build", binary_pair_timing_start)
                 intra_binary_items.append((intra_binary_classifier, pairs, labels))
 
         shared_projected = [
@@ -871,11 +971,14 @@ class TFCC(nn.Module):
                     prior_hard_neg_weight=self.prior_hard_neg_weight,
                     prior_cancel_weighting=self.prior_cancel_weighting,
                     labels=batch_labels,
-                    replace_binary_with_bmm=self.branch_uses_bmm("inter"),
+                    # replace_binary_with_bmm=self.branch_uses_bmm("inter"),
+                    timing_recorder=self.component_timer,
                 )
                 inter_losses.append(loss_inter)
                 if self.inter_binary_mode == "binary":
+                    binary_pair_timing_start = self.component_timer.start()
                     pairs, labels = self.form_binary_loss_data(shared_projected[left_idx], shared_projected[right_idx])
+                    self.component_timer.stop("binary_pair_build", binary_pair_timing_start)
                     inter_binary_items.append((inter_binary_classifier, pairs, labels))
             else:
                 anchor_idx = spec[1]
@@ -891,7 +994,9 @@ class TFCC(nn.Module):
                         "stats_key": self._stats_key(branch_key),
                     })
                     if self.inter_binary_mode == "binary":
+                        binary_pair_timing_start = self.component_timer.start()
                         pairs, labels = self.form_binary_loss_data(shared_projected[anchor_idx], shared_projected[other_idx])
+                        self.component_timer.stop("binary_pair_build", binary_pair_timing_start)
                         inter_binary_items.append((self.inter_binaries[branch_key], pairs, labels))
                 loss_inter, _ = loss_ntxent_anchor_vs_modalities(
                     shared_projected[anchor_idx],
@@ -906,16 +1011,20 @@ class TFCC(nn.Module):
                     prior_hard_neg_weight=self.prior_hard_neg_weight,
                     prior_cancel_weighting=self.prior_cancel_weighting,
                     labels=batch_labels,
-                    replace_binary_with_bmm=self.branch_uses_bmm("inter"),
+                    # replace_binary_with_bmm=self.branch_uses_bmm("inter"),
+                    timing_recorder=self.component_timer,
                 )
                 inter_losses.append(loss_inter)
 
+        binary_forward_timing_start = self.component_timer.start()
         if not self.uses_any_binary_classifier():
             L_binary = features[0].new_zeros(())
         else:
             bce_loss = nn.BCEWithLogitsLoss()
             binary_loss_terms = []
-            if self.temporal_binary_mode == "binary" and not self.use_intra_sample_for_temporal_filter:
+            # Disabled: temporal filtering no longer reuses intra-sample classifiers.
+            # if self.temporal_binary_mode == "binary" and not self.use_intra_sample_for_temporal_filter:
+            if self.temporal_binary_mode == "binary":
                 for binary_classifier, pairs, labels in temporal_binary_items:
                     temporal_preds = binary_classifier(pairs)
                     binary_loss_terms.append(bce_loss(temporal_preds.squeeze(), labels))
@@ -928,6 +1037,7 @@ class TFCC(nn.Module):
                     inter_preds = binary_classifier(pairs)
                     binary_loss_terms.append(bce_loss(inter_preds.squeeze(), labels))
             L_binary = sum(binary_loss_terms) if binary_loss_terms else features[0].new_zeros(())
+        self.component_timer.stop("binary_loss_forward", binary_forward_timing_start)
 
         sum_1 = sum(temporal_losses)
         L_C_intra = sum(intra_losses) / len(intra_losses)
@@ -969,11 +1079,11 @@ class Model(nn.Module):
         prior_info=None,
         prior_hard_neg_weight=1.0,
         prior_cancel_weighting=True,
-        replace_binary_with_bmm=False,
+        # replace_binary_with_bmm=False,  # Disabled: final method uses binary classifiers.
         temporal_binary_mode=None,
         intra_binary_mode=None,
         inter_binary_mode=None,
-        use_intra_sample_for_temporal_filter=False,
+        # use_intra_sample_for_temporal_filter=False,  # Disabled: temporal filtering uses temporal classifiers/priors.
         pretrain_labels=None,
         contrast_mode="pairwise",
         fn_analysis=False,
@@ -981,6 +1091,7 @@ class Model(nn.Module):
         fn_analysis_every=1,
         fn_analysis_threshold=0.5,
         fn_analysis_context=None,
+        log_component_timing=True,
         ):
         super(Model, self).__init__()
   
@@ -1013,11 +1124,11 @@ class Model(nn.Module):
             prior_info=prior_info,
             prior_hard_neg_weight=prior_hard_neg_weight,
             prior_cancel_weighting=prior_cancel_weighting,
-            replace_binary_with_bmm=replace_binary_with_bmm,
+            # replace_binary_with_bmm=replace_binary_with_bmm,
             temporal_binary_mode=temporal_binary_mode,
             intra_binary_mode=intra_binary_mode,
             inter_binary_mode=inter_binary_mode,
-            use_intra_sample_for_temporal_filter=use_intra_sample_for_temporal_filter,
+            # use_intra_sample_for_temporal_filter=use_intra_sample_for_temporal_filter,
             pretrain_labels=pretrain_labels,
             contrast_mode=contrast_mode,
             fn_analysis=fn_analysis,
@@ -1025,6 +1136,7 @@ class Model(nn.Module):
             fn_analysis_every=fn_analysis_every,
             fn_analysis_threshold=fn_analysis_threshold,
             fn_analysis_context=fn_analysis_context,
+            log_component_timing=log_component_timing,
         )
         
         self.classifier = MLP(hidden_dim * self.num_modalities, hidden_dim, num_class)

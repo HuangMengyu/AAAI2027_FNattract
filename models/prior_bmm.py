@@ -841,14 +841,16 @@ def mixture_positive_cosine_bmm_responsibility_torch(similarity, params, eps=1e-
     return responsibilities[:, positive_component].reshape(output_shape)
 
 
-def similarity_bmm_probability_matrix(similarity, max_iter=200, eps=1e-6):
-    params = fit_similarity_beta_mixture(
-        similarity.detach().cpu().numpy(),
-        max_iter=max_iter,
-        eps=eps,
-    )
-    torch_params = bmm_params_to_torch(params)
-    return mixture_positive_similarity_responsibility_torch(similarity, torch_params, eps=eps)
+# Disabled: the final method does not replace trained binary classifiers with
+# per-batch similarity BMMs.
+# def similarity_bmm_probability_matrix(similarity, max_iter=200, eps=1e-6):
+#     params = fit_similarity_beta_mixture(
+#         similarity.detach().cpu().numpy(),
+#         max_iter=max_iter,
+#         eps=eps,
+#     )
+#     torch_params = bmm_params_to_torch(params)
+#     return mixture_positive_similarity_responsibility_torch(similarity, torch_params, eps=eps)
 
 
 def bmm_params_to_torch(params):

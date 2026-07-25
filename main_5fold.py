@@ -2,6 +2,7 @@ import numpy as np
 import argparse
 import random
 import gc
+import sys
 from datetime import datetime
 
 from tqdm import tqdm, trange
@@ -186,7 +187,7 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Unsupported value encountered.')
-        
+
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -227,13 +228,19 @@ if __name__ == '__main__':
     parser.add_argument('--filter_inter', type=str2bool, default=True, help='whether to apply binary-guided filtering in inter-modal contrastive losses')
     parser.add_argument('--fn_filter_use_binary', type=str2bool, default=True, help='whether binary/BMM scores are used for false-negative attraction')
     parser.add_argument('--fn_filter_use_prior', type=str2bool, default=True, help='whether magnitude-prior probabilities are used for false-negative attraction when a prior is available')
-    parser.add_argument('--replace_binary_with_bmm', type=str2bool, default=False, help='whether to replace neural binary classifiers with per-batch BMMs fitted on all pairwise similarities')
-    parser.add_argument('--temporal_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='temporal branch selector: binary classifier or per-batch BMM')
-    parser.add_argument('--intra_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='intra-modal branch selector: binary classifier or per-batch BMM')
-    parser.add_argument('--inter_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='inter-modal branch selector: binary classifier or per-batch BMM')
+    # Disabled: the final method always uses neural binary classifiers.
+    # parser.add_argument('--replace_binary_with_bmm', type=str2bool, default=False, help='whether to replace neural binary classifiers with per-batch BMMs fitted on all pairwise similarities')
+    # parser.add_argument('--temporal_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='temporal branch selector: binary classifier or per-batch BMM')
+    # parser.add_argument('--intra_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='intra-modal branch selector: binary classifier or per-batch BMM')
+    # parser.add_argument('--inter_binary_mode', type=str, default=None, choices=['binary', 'bmm'], help='inter-modal branch selector: binary classifier or per-batch BMM')
+    parser.add_argument('--temporal_binary_mode', type=str, default='binary', choices=['binary'], help='temporal branch uses the neural binary classifier')
+    parser.add_argument('--intra_binary_mode', type=str, default='binary', choices=['binary'], help='intra-modal branch uses the neural binary classifier')
+    parser.add_argument('--inter_binary_mode', type=str, default='binary', choices=['binary'], help='inter-modal branch uses the neural binary classifier')
     parser.add_argument('--three_mod_contrast', type=str, default='pairwise', choices=['pairwise', '1vsall'], help='inter-modality contrast mode for 3-modality inputs')
-    parser.add_argument('--use_intra_sample_for_temporal_filter', type=str2bool, default=False, help='whether temporal filtering uses intra-modal sample-level binary/prior decisions instead of temporal segment-level binary/prior decisions')
+    # Disabled: temporal filtering always uses its own temporal classifiers and priors.
+    # parser.add_argument('--use_intra_sample_for_temporal_filter', type=str2bool, default=False, help='whether temporal filtering uses intra-modal sample-level binary/prior decisions instead of temporal segment-level binary/prior decisions')
     parser.add_argument('--use_prior', type=str2bool, default=False, help='whether to use log-RMS magnitude Euclidean-prior mixture filtering')
+    parser.add_argument('--prior_fit_only', type=str2bool, default=False, help='fit the prior once, print all prior timing results, and exit successfully before model training; implies --use_prior True')
     parser.add_argument('--prior_mode', type=str, default='combined', choices=['combined', 'separate'], help='whether to fit/use a combined-modality prior or separate modality priors')
     parser.add_argument('--prior_model', type=str, default='bmm', choices=['bmm', 'gmm'], help='mixture model for prior distances; BMM scales distances to [0, 1], GMM uses raw distances')
     parser.add_argument('--prior_gmm_metric', type=str, default='euclidean', choices=['euclidean', 'cosine', 'cosine_euclidean'], help='pair feature used for prior mixture fitting: Euclidean distance, cosine similarity, or their concatenation')
@@ -250,12 +257,16 @@ if __name__ == '__main__':
     parser.add_argument('--fn_analysis_dir', type=str, default=None, help='root directory for false-negative attraction analysis outputs; each dataset/fold/seed gets its own subdirectory')
     parser.add_argument('--fn_analysis_every', type=int, default=1, help='analyze every N filtering-active epochs')
     parser.add_argument('--fn_analysis_threshold', type=float, default=0.5, help='probability threshold used for offline attraction analysis')
+    parser.add_argument('--log_component_timing', type=str2bool, default=True, help='print per-epoch and total binary-training/filtering timing')
     
     opt = parser.parse_args()
-    fallback_binary_mode = 'bmm' if opt.replace_binary_with_bmm else 'binary'
-    opt.temporal_binary_mode = opt.temporal_binary_mode or fallback_binary_mode
-    opt.intra_binary_mode = opt.intra_binary_mode or fallback_binary_mode
-    opt.inter_binary_mode = opt.inter_binary_mode or fallback_binary_mode
+    if opt.prior_fit_only:
+        opt.use_prior = True
+    # Disabled: binary classifiers are no longer replaceable by per-batch BMMs.
+    # fallback_binary_mode = 'bmm' if opt.replace_binary_with_bmm else 'binary'
+    # opt.temporal_binary_mode = opt.temporal_binary_mode or fallback_binary_mode
+    # opt.intra_binary_mode = opt.intra_binary_mode or fallback_binary_mode
+    # opt.inter_binary_mode = opt.inter_binary_mode or fallback_binary_mode
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -302,13 +313,14 @@ if __name__ == '__main__':
     print("filter_inter:", opt.filter_inter)
     print("fn_filter_use_binary:", opt.fn_filter_use_binary)
     print("fn_filter_use_prior:", opt.fn_filter_use_prior)
-    print("replace_binary_with_bmm:", opt.replace_binary_with_bmm)
+    # print("replace_binary_with_bmm:", opt.replace_binary_with_bmm)
     print("temporal_binary_mode:", opt.temporal_binary_mode)
     print("intra_binary_mode:", opt.intra_binary_mode)
     print("inter_binary_mode:", opt.inter_binary_mode)
     print("three_mod_contrast:", opt.three_mod_contrast)
-    print("use_intra_sample_for_temporal_filter:", opt.use_intra_sample_for_temporal_filter)
+    # print("use_intra_sample_for_temporal_filter:", opt.use_intra_sample_for_temporal_filter)
     print("use_prior:", opt.use_prior)
+    print("prior_fit_only:", opt.prior_fit_only)
     print("prior_mode:", opt.prior_mode)
     print("prior_model:", opt.prior_model)
     print("prior_gmm_metric:", opt.prior_gmm_metric)
@@ -325,16 +337,24 @@ if __name__ == '__main__':
     print("fn_analysis_dir:", opt.fn_analysis_dir)
     print("fn_analysis_every:", opt.fn_analysis_every)
     print("fn_analysis_threshold:", opt.fn_analysis_threshold)
+    print("log_component_timing:", opt.log_component_timing)
 
     if opt.dataset_name == 'SleepEDFx_3' or opt.dataset_name == 'PAMAP2_3':
         print("Using 3-modality input for dataset:", opt.dataset_name)
         # seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
         # seeds = [0, 20, 42, 60, 80]
         # seeds = [0, 1, 2, 3, 4]
-        seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9]
-        seeds = seeds[5:] 
+        seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        seeds = seeds[10:]
     else:
-        seeds = opt.seeds  # use 3 seeds
+        seeds = [0, 20, 40, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        # seeds = opt.seeds  # use 3 seeds
+        # seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9]
+        # seeds = [0, 20, 42, 60, 66, 80, 100, 88]
+        seeds = seeds[12:]
+        if isinstance(seeds, int):
+            seeds = [seeds]
+        # seeds = seeds[:5]  # use first 5 seeds
     print(seeds)
 
     ssl = opt.ssl
@@ -399,7 +419,7 @@ if __name__ == '__main__':
             fn_analysis_root,
             f"{dataset_name}_fold{opt.current_num_fold}_seed{seed}",
         )
-        
+
 
         i = opt.current_num_fold
 
@@ -436,6 +456,9 @@ if __name__ == '__main__':
                 three_mod_contrast=opt.three_mod_contrast,
                 plot=opt.prior_plot,
             )
+            if opt.prior_fit_only:
+                print("Prior-fit-only mode complete; exiting before model initialization and training.")
+                sys.exit(0)
             
         # model initialization
         print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims, mod3_dims] if dim is not None])
@@ -464,11 +487,11 @@ if __name__ == '__main__':
             filter_inter=opt.filter_inter,
             fn_filter_use_binary=opt.fn_filter_use_binary,
             fn_filter_use_prior=opt.fn_filter_use_prior,
-            replace_binary_with_bmm=opt.replace_binary_with_bmm,
+            # replace_binary_with_bmm=opt.replace_binary_with_bmm,
             temporal_binary_mode=opt.temporal_binary_mode,
             intra_binary_mode=opt.intra_binary_mode,
             inter_binary_mode=opt.inter_binary_mode,
-            use_intra_sample_for_temporal_filter=opt.use_intra_sample_for_temporal_filter,
+            # use_intra_sample_for_temporal_filter=opt.use_intra_sample_for_temporal_filter,
             use_prior=opt.use_prior,
             prior_info=prior_info,
             prior_hard_neg_weight=opt.prior_hard_neg_weight,
@@ -479,6 +502,7 @@ if __name__ == '__main__':
             fn_analysis_dir=fn_analysis_dir,
             fn_analysis_every=opt.fn_analysis_every,
             fn_analysis_threshold=opt.fn_analysis_threshold,
+            log_component_timing=opt.log_component_timing,
             fn_analysis_context={
                 "dataset_name": dataset_name,
                 "fold": i,
@@ -489,8 +513,10 @@ if __name__ == '__main__':
         if ssl:
             # Pretraining
             self_supervised_learning(dataset_name, i, model, pretrain_data, batch_size_ssl, device, model_save_path, use_iteration=use_iteration)
-            
-        
+
+        # exit after logging training time
+        # exit(0)
+
         pretrained_weights = os.path.join(model_save_path, f'Pretrained_Model_{i}.pkl')
         model.load_state_dict(torch.load(pretrained_weights))
         

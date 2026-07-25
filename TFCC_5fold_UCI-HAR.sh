@@ -32,6 +32,7 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
+# Disabled: --use_intra_sample_for_temporal_filter is obsolete; temporal filter uses temporal classifiers and priors.
 python main_5fold.py \
     --dataset_name UCI-HAR \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
@@ -50,7 +51,6 @@ python main_5fold.py \
     --intra_binary_mode binary \
     --inter_binary_mode binary \
     --prior_gmm_metric cosine \
-    --use_intra_sample_for_temporal_filter False \
     --prior_cancel_weighting False \
     --prior_save_dir prior_cache/UCI-HAR_gmm_200iter_concat_cosine_adaptivewarmup \
     --prior_hard_neg_weight 1.0 \

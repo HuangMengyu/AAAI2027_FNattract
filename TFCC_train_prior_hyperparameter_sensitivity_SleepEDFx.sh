@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2025-22-1224 -p alvis
-#SBATCH -t 08:10:00
+#SBATCH -A NAISS2026-4-117 -p alvis
+#SBATCH -t 09:00:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
-#SBATCH --job-name=warmup_ablation_SleepEDFx
-#SBATCH --array=1-15
+#SBATCH --job-name=prior_sensitivity_SleepEDFx
+#SBATCH --array=1-30
 
-input_file='/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027/warm_epochs_ablation_5fold.txt'
-# Load parameters safely
+input_file='/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027/prior_hyperparameter_sensitivity_5fold.txt'
 source <(sed -n "${SLURM_ARRAY_TASK_ID}p" "$input_file")
 
 module purge
@@ -15,27 +14,26 @@ module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
 module load scikit-learn/1.4.2-gfbf-2023a
 module load einops/0.7.0-GCCcore-12.3.0
 
-# echo "cut_off=${cut_off} attract_filter=${attract_filter}"
 echo "Running on node: $SLURMD_NODENAME"
 
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
-
 export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
 
-# cd /cephyr/users/mengyuh/Alvis/ComparativeStudy/Codes/Codes/Collection
 cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
-# mkdir -p $TMPDIR/TFCC_multimodal
-# For Testing:
-srun --output="logs_warmup_ablation/SleepEDFx_maxiter200/warmup${warm_epochs}_SleepEDFx_%A_%a.out" \
-# Disabled: --use_intra_sample_for_temporal_filter is obsolete; temporal filter uses temporal classifiers and priors.
+log_dir='logs_prior_hyperparameter_sensitivity/SleepEDFx'
+checkpoint_path="checkpoints/prior_hyperparameter_sensitivity/warmup4_${sensitivity_setup}_pairs${prior_num_random_pairs}_iter${prior_fit_max_iter}_seg${prior_segment_len}_SleepEDFx"
+mkdir -p "$log_dir"
+
+srun --output="${log_dir}/warmup4_${sensitivity_setup}_pairs${prior_num_random_pairs}_iter${prior_fit_max_iter}_seg${prior_segment_len}_SleepEDFx_%A_%a.out" \
 python -u main_5fold.py \
     --dataset_name SleepEDFx \
-    --current_num_fold ${current_num_fold} \
+    --current_num_fold "${current_num_fold}" \
     --epochs 10 \
-    --warm_epochs ${warm_epochs} \
-    --model_save_path checkpoints/warmup_ablation/maxiter200_warmup${warm_epochs}_SleepEDFx \
+    --warm_epochs 4 \
+    --adaptive_warmup_threshold 0.35 \
+    --model_save_path "$checkpoint_path" \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -49,8 +47,8 @@ python -u main_5fold.py \
     --prior_gmm_metric cosine \
     --prior_cancel_weighting False \
     --prior_hard_neg_weight 1.0 \
-    --prior_num_random_pairs 10000 \
+    --prior_num_random_pairs "${prior_num_random_pairs}" \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
-    --prior_fit_max_iter 200 \
-    --prior_segment_len 40
+    --prior_fit_max_iter "${prior_fit_max_iter}" \
+    --prior_segment_len "${prior_segment_len}"

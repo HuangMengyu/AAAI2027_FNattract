@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-22-1224 -p alvis
-#SBATCH -t 06:00:00
+#SBATCH -t 07:00:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=SleepEDFx_3
-#SBATCH --array=3-5
-#SBATCH --output=logs_3modality/SleepEDFx_3_new10seed/warmup7_SleepEDFx_3_%A_%a.out
+#SBATCH --array=1-5
+#SBATCH --output=logs_3modality/SleepEDFx_3_new20seed/warmup7_SleepEDFx_3_%A_%a.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -34,6 +34,7 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
+# Disabled: --use_intra_sample_for_temporal_filter is obsolete; temporal filter uses temporal classifiers and priors.
 python -u main_5fold.py \
     --dataset_name SleepEDFx_3 \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
@@ -41,7 +42,7 @@ python -u main_5fold.py \
     --warm_epochs 7 \
     --adaptive_warmup_threshold 0.035 \
     --three_mod_contrast pairwise \
-    --model_save_path checkpoints_3modality/new10seed_warmup7_SleepEDFx_3 \
+    --model_save_path checkpoints_3modality/new20seed_warmup7_SleepEDFx_3 \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
@@ -54,12 +55,10 @@ python -u main_5fold.py \
     --inter_binary_mode binary \
     --prior_gmm_metric cosine \
     --prior_cancel_weighting False \
-    --use_intra_sample_for_temporal_filter False \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
     --prior_fit_max_iter 200 \
     --prior_segment_len 4
-# only first 5 seeds to make up for first
     

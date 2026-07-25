@@ -7,7 +7,7 @@ from .filter_stats import update_filter_stats, update_fn_analysis_stats, update_
 from .prior_bmm import (
     prior_pair_value_matrix,
     prior_positive_probability_matrix,
-    similarity_bmm_probability_matrix,
+    # similarity_bmm_probability_matrix,  # Disabled: binary-to-BMM replacement.
 )
 
 
@@ -106,7 +106,7 @@ class TC(nn.Module):
         shuffle_idx = torch.randperm(pairs.shape[0], device=self.device)
         return pairs[shuffle_idx], labels[shuffle_idx]
 
-    def forward(self, features_aug1, features_aug2, filter_neg=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, return_binary_data=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, prior_is_segment=False, labels=None, external_filter_decision=None, external_filter_weight=None, replace_binary_with_bmm=False, fn_filter_use_binary=True, fn_filter_use_prior=True): # aug1 is used on z level, aug 2 is used on h level
+    def forward(self, features_aug1, features_aug2, filter_neg=False, binary_classifier=None, scope_variable=0, filter_stats=None, stats_key=None, return_binary_data=False, prior_features=None, prior_bmm=None, prior_hard_neg_weight=1.0, prior_cancel_weighting=True, prior_is_segment=False, labels=None, external_filter_decision=None, external_filter_weight=None, fn_filter_use_binary=True, fn_filter_use_prior=True, timing_recorder=None): # aug1 is used on z level, aug 2 is used on h level
         h_aug1 = features_aug1  # features are (batch_size, #channels, seq_len)
         seq_len = h_aug1.shape[2]
         h_aug1 = h_aug1.transpose(1, 2)
@@ -137,7 +137,8 @@ class TC(nn.Module):
 
         for i in np.arange(0, self.timestep):  # calculate the temporal loss per each timestep and then take average
             total = torch.mm(pred[i], torch.transpose(encode_samples[i], 0, 1))
-            
+            filter_timing_start = timing_recorder.start() if filter_neg and timing_recorder is not None else None
+
             if filter_neg:
                 # S>P: sim(pos_i, neg_j) > sim(anchor_i, neg_j)
                 diag_mask = torch.eye(batch, dtype=torch.bool, device=self.device)
@@ -145,7 +146,8 @@ class TC(nn.Module):
                 FN_mask = neg_mask
 
                 use_binary_signal = fn_filter_use_binary and (
-                    replace_binary_with_bmm or binary_classifier is not None or external_filter_decision is not None
+                    # replace_binary_with_bmm or
+                    binary_classifier is not None or external_filter_decision is not None
                 )
                 use_prior_signal = (
                     fn_filter_use_prior
@@ -158,9 +160,10 @@ class TC(nn.Module):
                     binary_output = None
                     if use_binary_signal:
                         with torch.no_grad():
-                            if replace_binary_with_bmm:
-                                binary_output = similarity_bmm_probability_matrix(total)
-                            elif binary_classifier is not None:
+                            # if replace_binary_with_bmm:
+                            #     binary_output = similarity_bmm_probability_matrix(total)
+                            # elif binary_classifier is not None:
+                            if binary_classifier is not None:
                                 binary_input = self.make_binary_pair_grid(pred[i], encode_samples[i])
                                 binary_output = torch.sigmoid(binary_classifier(binary_input))
                                 binary_output = binary_output.reshape(batch, batch)
@@ -203,40 +206,43 @@ class TC(nn.Module):
                     if use_binary_signal and use_prior_signal:
                         candidate_mask = FN_mask & (binary_output > 0.5)
                         attract_mask = candidate_mask & prior_decision
-                        cancel_mask = FN_mask & ((binary_output < 0.5) & prior_decision)
-                        hard_neg_mask = FN_mask & ((binary_output > 0.5) & ~prior_decision)
-
-                        cancel_weight = torch.ones_like(neg_weight) - prior_prob if prior_cancel_weighting else torch.ones_like(neg_weight)
-                        neg_weight = torch.where(cancel_mask, cancel_weight, neg_weight)
-                        if isinstance(prior_hard_neg_weight, str) and prior_hard_neg_weight.lower() == "auto":
-                            hard_neg_weight = 1 - prior_prob
-                        else:
-                            hard_neg_weight = torch.full_like(neg_weight, float(prior_hard_neg_weight))
-                        neg_weight = torch.where(hard_neg_mask, hard_neg_weight, neg_weight)
+                        # Disabled: the final method only attracts selected false negatives.
+                        # cancel_mask = FN_mask & ((binary_output < 0.5) & prior_decision)
+                        # hard_neg_mask = FN_mask & ((binary_output > 0.5) & ~prior_decision)
+                        # cancel_weight = torch.ones_like(neg_weight) - prior_prob if prior_cancel_weighting else torch.ones_like(neg_weight)
+                        # neg_weight = torch.where(cancel_mask, cancel_weight, neg_weight)
+                        # if isinstance(prior_hard_neg_weight, str) and prior_hard_neg_weight.lower() == "auto":
+                        #     hard_neg_weight = 1 - prior_prob
+                        # else:
+                        #     hard_neg_weight = torch.full_like(neg_weight, float(prior_hard_neg_weight))
+                        # neg_weight = torch.where(hard_neg_mask, hard_neg_weight, neg_weight)
                     elif use_binary_signal:
                         candidate_mask = None
-                        hard_neg_mask = None
                         attract_mask = FN_mask & (binary_output > 0.5)
-                        cancel_mask = torch.zeros_like(FN_mask)
+                        # hard_neg_mask = None
+                        # cancel_mask = torch.zeros_like(FN_mask)
                     else:
                         candidate_mask = FN_mask
-                        hard_neg_mask = torch.zeros_like(FN_mask)
                         attract_mask = FN_mask & prior_decision
-                        cancel_mask = torch.zeros_like(FN_mask)
+                        # hard_neg_mask = torch.zeros_like(FN_mask)
+                        # cancel_mask = torch.zeros_like(FN_mask)
 
                     neg_weight = neg_weight.masked_fill(attract_mask, 0.0)
+
+                    if filter_timing_start is not None:
+                        timing_recorder.stop("fn_filtering", filter_timing_start)
 
                     update_filter_stats(
                         filter_stats,
                         stats_key,
                         FN_mask,
                         attract_mask,
-                        cancel_mask,
+                        # cancel_mask,
                         binary_output,
                         diag_mask,
                         prior_prob=prior_prob,
                         prior_candidate_mask=candidate_mask,
-                        prior_hard_neg_mask=hard_neg_mask,
+                        # prior_hard_neg_mask=hard_neg_mask,
                     )
                     update_fn_analysis_stats(
                         filter_stats,
@@ -257,6 +263,12 @@ class TC(nn.Module):
             else:
                 nce = nce + torch.sum(torch.diag(self.lsoftmax(total)))
 
+           
+        post_filter_timing_start = (
+            timing_recorder.start()
+            if filter_neg and labels is not None and (temporal_binary_outputs or temporal_prior_votes) and timing_recorder is not None
+            else None
+        )
         if filter_neg and labels is not None and (temporal_binary_outputs or temporal_prior_votes):
             diag_mask = torch.eye(batch, dtype=torch.bool, device=self.device)
             binary_mean = torch.stack(temporal_binary_outputs, dim=0).mean(dim=0) if temporal_binary_outputs else None
@@ -272,13 +284,18 @@ class TC(nn.Module):
                 binary_output=binary_mean,
                 prior_decision=prior_decision,
             )
+        if post_filter_timing_start is not None:
+            timing_recorder.stop("fn_filtering", post_filter_timing_start)
         nce /= -1. * batch * self.timestep
 
         z_full = self.seq_transformer(h_aug1)
         c_full = self.projection_head(z_full)
 
         if return_binary_data:
+            binary_pair_timing_start = timing_recorder.start() if timing_recorder is not None else None
             binary_pairs, binary_labels = self.form_temporal_binary_loss_data(pred, encode_samples)
+            if binary_pair_timing_start is not None:
+                timing_recorder.stop("binary_pair_build", binary_pair_timing_start)
             return nce, z_full, c_full, binary_pairs, binary_labels
 
         return nce, z_full, c_full

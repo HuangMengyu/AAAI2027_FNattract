@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-22-1224 -p alvis
-#SBATCH -t 3:30:00
+#SBATCH -t 00:40:00
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=TFCC_multimodal_bmm_ablation
-#SBATCH --array=1-3
-#SBATCH --output=logs/SleepEDFx/bmm_4000_4_warmup4_SleepEDFx_%A_%a.out
+#SBATCH --array=1-5
+#SBATCH --output=logs_logtime/SleepEDFx/4000_4_warmup4_SleepEDFx_%A_%a.out
 
 module purge
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
@@ -34,34 +34,32 @@ cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
+# Disabled: --use_intra_sample_for_temporal_filter is obsolete; temporal filter uses temporal classifiers and priors.
 python -u main_5fold.py \
     --dataset_name SleepEDFx \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \
-    --epochs 10 \
-    --warm_epochs 4 \
+    --epochs 2 \
+    --warm_epochs 1 \
     --adaptive_warmup_threshold 0.035 \
     --fn_filter_use_prior True \
-    --model_save_path checkpoints/bmm_ablation/4000_4_warmup4_bmm_SleepEDFx \
+    --prior_fit_only False \
+    --model_save_path checkpoints_logtime/4000_4_warmup4_SleepEDFx_fitprioronly \
     --batch_size 128 \
     --lr 1e-3 \
     --ssl True \
     --use_prior True \
     --prior_mode separate \
-    --prior_model bmm \
+    --prior_model gmm \
     --prior_plot False \
-    --temporal_binary_mode binary \
-    --intra_binary_mode binary \
-    --inter_binary_mode binary \
     --prior_gmm_metric cosine \
     --prior_cancel_weighting False \
-    --use_intra_sample_for_temporal_filter False \
     --prior_hard_neg_weight 1.0 \
     --prior_num_random_pairs 4000 \
     --prior_num_self_pairs 0 \
     --prior_delta_mode concat \
     --prior_fit_max_iter 200 \
     --prior_segment_len 4 \
-    --fn_analysis True \
-    --seeds 40
+    --fn_analysis False \
+    --log_component_timing True \
 
     

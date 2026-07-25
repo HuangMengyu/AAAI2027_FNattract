@@ -302,12 +302,12 @@ def update_filter_stats(
     branch,
     fn_mask,
     attract_mask,
-    cancel_mask,
+    # cancel_mask,  # Disabled: final method only uses attraction.
     binary_output,
     diag_mask,
     prior_prob=None,
     prior_candidate_mask=None,
-    prior_hard_neg_mask=None,
+    # prior_hard_neg_mask=None,  # Disabled: final method only uses attraction.
 ):
     if stats is None:
         return
@@ -327,7 +327,7 @@ def update_filter_stats(
             "pairs": 0,
             "fn": 0,
             "attract": 0,
-            "cancel": 0,
+            # "cancel": 0,
             "prob_sum": 0.0,
             "prob_sq_sum": 0.0,
             "gt_09": 0,
@@ -335,7 +335,7 @@ def update_filter_stats(
             "binary_gt_05": 0,
             "prior_candidates": 0,
             "prior_attract": 0,
-            "prior_hard_neg": 0,
+            # "prior_hard_neg": 0,
             "prior_prob_sum": 0.0,
             "prior_prob_sq_sum": 0.0,
             "prior_prob_count": 0,
@@ -346,7 +346,7 @@ def update_filter_stats(
         branch_stats["pairs"] += num_pairs
         branch_stats["fn"] += int((fn_mask & non_diag_mask).sum().item())
         branch_stats["attract"] += int((attract_mask & non_diag_mask).sum().item())
-        branch_stats["cancel"] += int((cancel_mask & non_diag_mask).sum().item())
+        # branch_stats["cancel"] += int((cancel_mask & non_diag_mask).sum().item())
         if binary_output is not None:
             branch_stats["prob_sum"] += float(probs.sum().item())
             branch_stats["prob_sq_sum"] += float((probs * probs).sum().item())
@@ -355,11 +355,11 @@ def update_filter_stats(
             branch_stats["uncertain_045_055"] += int(((probs > 0.45) & (probs < 0.55)).sum().item())
         if prior_prob is not None and prior_candidate_mask is not None:
             candidate_mask = prior_candidate_mask & non_diag_mask
-            hard_neg_mask = prior_hard_neg_mask & non_diag_mask if prior_hard_neg_mask is not None else torch.zeros_like(candidate_mask)
+            # hard_neg_mask = prior_hard_neg_mask & non_diag_mask if prior_hard_neg_mask is not None else torch.zeros_like(candidate_mask)
             candidate_count = int(candidate_mask.sum().item())
             branch_stats["prior_candidates"] += candidate_count
             branch_stats["prior_attract"] += int((attract_mask & non_diag_mask).sum().item())
-            branch_stats["prior_hard_neg"] += int(hard_neg_mask.sum().item())
+            # branch_stats["prior_hard_neg"] += int(hard_neg_mask.sum().item())
             if candidate_count > 0:
                 candidate_probs = prior_prob[candidate_mask].detach()
                 branch_stats["prior_prob_sum"] += float(candidate_probs.sum().item())
