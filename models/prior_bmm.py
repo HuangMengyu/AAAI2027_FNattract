@@ -519,12 +519,14 @@ def save_mixture_fit_svg(name, distances, x, mixture_pdf, component_pdf, mean_li
     left, right, top, bottom = 80, 30, 55, 75
     plot_width = width - left - right
     plot_height = height - top - bottom
-    max_x = float(max(np.max(x), 1e-8))
-    hist_density, hist_edges = np.histogram(distances, bins=bins, range=(0.0, max_x), density=True)
+    min_x = float(np.min(x))
+    max_x = float(np.max(x))
+    x_span = max(max_x - min_x, 1e-8)
+    hist_density, hist_edges = np.histogram(distances, bins=bins, range=(min_x, max_x), density=True)
     y_max = float(max(np.max(hist_density), np.max(mixture_pdf), 1e-8) * 1.08)
 
     def sx(value):
-        return left + (float(value) / max_x) * plot_width
+        return left + ((float(value) - min_x) / x_span) * plot_width
 
     def sy(value):
         return top + plot_height - (float(value) / y_max) * plot_height
@@ -539,7 +541,7 @@ def save_mixture_fit_svg(name, distances, x, mixture_pdf, component_pdf, mean_li
         f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_height}" stroke="#333"/>',
         f'<text x="{width / 2:.1f}" y="{height - 22}" text-anchor="middle" font-family="Arial" font-size="13">{escape(x_label)}</text>',
         f'<text x="22" y="{top + plot_height / 2:.1f}" text-anchor="middle" transform="rotate(-90 22 {top + plot_height / 2:.1f})" font-family="Arial" font-size="13">density</text>',
-        f'<text x="{left}" y="{top + plot_height + 20}" text-anchor="middle" font-family="Arial" font-size="11">0</text>',
+        f'<text x="{left}" y="{top + plot_height + 20}" text-anchor="middle" font-family="Arial" font-size="11">{min_x:.3g}</text>',
         f'<text x="{left + plot_width}" y="{top + plot_height + 20}" text-anchor="middle" font-family="Arial" font-size="11">{max_x:.3g}</text>',
         f'<text x="{left - 8}" y="{top + plot_height}" text-anchor="end" font-family="Arial" font-size="11">0</text>',
         f'<text x="{left - 8}" y="{top + 4}" text-anchor="end" font-family="Arial" font-size="11">{y_max:.3g}</text>',
@@ -588,19 +590,32 @@ def save_mixture_fit_plot(name, distances, params, plot_dir, artifact_stem, bins
         print(f"matplotlib unavailable for prior fit plot [{name}] ({exc}); saving SVG fallback")
 
     distances = np.asarray(distances, dtype=np.float64)
+    distances = distances[np.isfinite(distances)]
+    if distances.size == 0:
+        raise ValueError(f"No finite prior values available for plot [{name}]")
     os.makedirs(plot_dir, exist_ok=True)
+    model_type = params.get("model_type", "bmm")
+    metric = params.get("metric", "euclidean")
+    is_similarity_axis = model_type in ("cosine_bmm", "similarity_bmm") or metric == "cosine"
     min_distance = float(np.min(distances))
     max_distance = float(np.max(distances))
     if np.isclose(max_distance, min_distance):
-        min_distance -= 0.5
-        max_distance = 1.0
-    if min_distance > 0:
+        if is_similarity_axis:
+            padding = max(abs(min_distance) * 0.01, 0.01)
+            min_distance = max(-1.0, min_distance - padding)
+            max_distance = min(1.0, max_distance + padding)
+            if np.isclose(max_distance, min_distance):
+                min_distance -= padding
+                max_distance += padding
+        else:
+            min_distance -= 0.5
+            max_distance = 1.0
+    if min_distance > 0 and not is_similarity_axis:
         min_distance = 0.0
     x = np.linspace(min_distance, max_distance, 512)
     weights = np.asarray(params["weights"], dtype=np.float64)
     means = np.asarray(params["means"], dtype=np.float64)
     variances = np.asarray(params["variances"], dtype=np.float64)
-    model_type = params.get("model_type", "bmm")
 
     component_pdf = []
     if model_type == "bmm":
@@ -639,7 +654,6 @@ def save_mixture_fit_plot(name, distances, params, plot_dir, artifact_stem, bins
             pdf = np.exp(_log_gaussian_pdf(x, float(means[component]), variance, eps=eps))
             component_pdf.append(weights[component] * pdf)
         mean_lines = means
-        metric = params.get("metric", "euclidean")
         x_label = "cosine similarity" if metric == "cosine" else "raw Euclidean distance"
 
     mixture_pdf = np.sum(np.stack(component_pdf, axis=0), axis=0)
@@ -658,7 +672,15 @@ def save_mixture_fit_plot(name, distances, params, plot_dir, artifact_stem, bins
         )
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=140)
-    ax.hist(distances, bins=bins, density=True, alpha=0.35, color="#4C78A8", label="distance histogram")
+    ax.hist(
+        distances,
+        bins=bins,
+        range=(min_distance, max_distance),
+        density=True,
+        alpha=0.35,
+        color="#4C78A8",
+        label="distance histogram",
+    )
     ax.plot(x, mixture_pdf, color="#111111", linewidth=2.0, label=f"{model_type.upper()} mixture")
     colors = ["#E45756", "#54A24B"]
     for component, pdf in enumerate(component_pdf):
@@ -667,6 +689,7 @@ def save_mixture_fit_plot(name, distances, params, plot_dir, artifact_stem, bins
     ax.set_title(f"Prior distance fit: {name}")
     ax.set_xlabel(x_label)
     ax.set_ylabel("density")
+    ax.set_xlim(min_distance, max_distance)
     ax.legend()
     fig.tight_layout()
 
@@ -1286,11 +1309,11 @@ def load_or_build_magnitude_prior(
         "feature_shapes": feature_shapes,
     }
     # do not save prior artifact
-    # save_prior_artifact(path, prior, metadata)
+    save_prior_artifact(path, prior, metadata)
     prior["metadata"] = metadata
     prior["path"] = path
     prior["loaded"] = False
-    # print(f"Saved magnitude prior artifact: {path}")
+    print(f"Saved magnitude prior artifact: {path}")
     return prior
 
 
