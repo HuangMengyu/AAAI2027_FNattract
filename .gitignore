@@ -12,6 +12,7 @@ env/
 conda-env/
 .env
 **/*env/
+**/*.sif/
 
 
 # Data

@@ -1,0 +1,70 @@
+STATUS
+Draft source-build recipe, not built or GPU-tested by Codex.
+No compute job has been submitted. This is an experiment runtime subset,
+not a complete reconstruction of every distribution in requirements_all.txt.
+
+PRESERVED
+PyTorch 2.1.2, CUDA toolkit 12.1.1, NumPy 1.25.1, SciPy 1.11.1,
+pandas 2.0.3, scikit-learn 1.4.2, einops 0.7.0, matplotlib 3.7.2,
+and pinned runtime dependencies listed in requirements-runtime.txt.
+psutil 5.9.5 is compiled from source because that release lacks an ARM wheel.
+
+ASSUMPTIONS AND DEVIATIONS
+Python 3.11.3 is inferred from the original 2023a module toolchain.
+Pillow 10.0.0 is provisional: requirements_all.txt also lists 9.5.0.
+pyparsing 3.0.9 replaces exported 3.1.0 to satisfy matplotlib metadata.
+cuDNN 8.9.2.26 is a selected CUDA-12.1-compatible ARM release; the original
+version has not been established. Obtain the old recipe if exact matching matters.
+GCC 11 / Ubuntu 22.04 / OpenBLAS differ from the original GCC-12.3.0 stack.
+oneDNN/MKLDNN CPU acceleration is disabled. NCCL comes from the PyTorch source
+build; its actual version is reported by smoke_gpu.py.
+PyTorch bundle extras (torchvision, torchtext, torchaudio, torchdata, Ignite,
+profiler) are omitted because the inspected training/testing imports do not
+require them. This does not reproduce their original presence.
+MNE preprocessing and optional UMAP plotting are not covered: their versions
+are absent from the export. Use the original preprocessed datasets for comparisons.
+Triton / torch.compile and multi-node Slingshot communication are not validated.
+
+BUILD ON AN ARRHENIUS GPU NODE
+interactive -A <GPU_COMPUTE_ACCOUNT> -p gpu --gpus=1 -t 240
+module --quiet purge
+uname -m
+cd /nobackup/proj/disk/naiss2025-22-1224/shared/AAAI2027/AAAI2027/containers/alvis-reconstruction
+mkdir -p "${TMPDIR:-/tmp}/alvis-build-${SLURM_JOB_ID:?}" "${TMPDIR:-/tmp}/alvis-cache-${SLURM_JOB_ID:?}"
+export APPTAINER_TMPDIR="${TMPDIR:-/tmp}/alvis-build-${SLURM_JOB_ID}"
+export APPTAINER_CACHEDIR="${TMPDIR:-/tmp}/alvis-cache-${SLURM_JOB_ID}"
+# Verify adequate local disk and memory first. Compilation may take hours.
+df -h "$APPTAINER_TMPDIR"
+free -h
+set -o pipefail
+apptainer build experiment-arm64.sif experiment.def 2>&1 | tee build.log
+
+If rootless apt installation fails and site configuration allows fakeroot,
+retry with apptainer build --fakeroot experiment-arm64.sif experiment.def.
+If user namespaces/fakeroot are unavailable, build on an approved ARM builder
+or request support assistance. Do not use sudo on the cluster.
+The old Docker tag's current registry availability was not independently verified.
+If missing, obtain an archived ARM CUDA 12.1.1 development image from support;
+do not silently change the toolkit version or substitute an x86 image.
+Do not ignore pip check failures or silently upgrade packages to get a build.
+
+VALIDATE IN A GPU ALLOCATION
+apptainer exec --cleanenv --nv experiment-arm64.sif python /opt/reconstruction/smoke_gpu.py
+# The existing project is bind mounted at its original absolute path.
+cd ../..
+apptainer exec --cleanenv --nv -B /nobackup/proj \
+    containers/alvis-reconstruction/experiment-arm64.sif \
+    python -c 'import model, base_models, common_utils.dataset_loader; print("Project imports passed")'
+# Run training/testing with the original arguments and precision settings.
+# Do not add deterministic or TF32 settings simply as part of this migration.
+
+ARCHIVE AFTER VALIDATION
+cd containers/alvis-reconstruction
+apptainer exec --cleanenv --nv experiment-arm64.sif python /opt/reconstruction/smoke_gpu.py > gpu-validation.json
+apptainer exec --cleanenv experiment-arm64.sif cat /opt/reconstruction/requirements-installed.txt > requirements-installed.txt
+apptainer inspect --json experiment-arm64.sif > image-metadata.json
+sha256sum experiment-arm64.sif experiment.def requirements-runtime.txt smoke_gpu.py > SHA256SUMS
+Keep the SIF, recipe, build log, manifests, validation output, and experiment
+code/configuration. The final SIF is immutable; apt packages and the base tag
+are not fully locked for a future rebuild, so preserve the image itself.
+Environment equality and equality of experiment results require separate checks.

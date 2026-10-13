@@ -1,17 +1,42 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2026-4-117 -p alvis
+#SBATCH -A naiss2026-4-1354-gpu
+#SBATCH -p gpu
+#SBATCH --gpus 1
+#SBATCH -n 1
+#SBATCH -N 1
+#SBATCH --chdir=.
 #SBATCH -t 00:30:00
-#SBATCH --ntasks=1
-#SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=requirements
 #SBATCH --output=logs_export_requirements/%A_%a.out
 
-module purge
-module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
-module load scikit-learn/1.4.2-gfbf-2023a
-module load einops/0.7.0-GCCcore-12.3.0
-module load matplotlib/3.7.2-gfbf-2023a
-    
+module --quiet purge
+
+PROJECT=/nobackup/proj/disk/naiss2025-22-1224/shared/AAAI2027/AAAI2027
+IMAGE="$PROJECT/containers/alvis-reconstruction/experiment-arm64.sif"
+WORKDIR="$PROJECT"
+
+if [[ ! -r "$IMAGE" ]]; then
+    echo "Container image is missing or unreadable: $IMAGE" >&2
+    exit 1
+fi
+cd "$WORKDIR" || exit 1
+
+# Retain Slurm's GPU assignment inside the clean container environment.
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    export APPTAINERENV_CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE_DEVICES"
+fi
+export APPTAINERENV_PYTHONPATH="$PROJECT"
+
+CONTAINER_ARGS=(
+    --cleanenv
+    --nv
+    --bind /nobackup/proj
+    # Support Python entry points that still contain the original dataset paths.
+    --bind "/nobackup/proj/disk/naiss2025-22-1224/shared:/mimer/NOBACKUP/groups/naiss2025-22-1224"
+    --bind "$PROJECT:/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027"
+    --pwd "$WORKDIR"
+)
+
 # python3 -m pip freeze | grep -E '^(numpy|scipy|scikit-learn|tqdm|einops|torch|pandas|matplotlib|mne)==' > requirements.txt
 
 # print some packages
@@ -41,6 +66,7 @@ module load matplotlib/3.7.2-gfbf-2023a
 # PY
 
 # print all packages
+srun apptainer exec "${CONTAINER_ARGS[@]}" "$IMAGE" \
 python3 - <<'PY' > requirements_all.txt
 from importlib.metadata import distributions
 

@@ -1,40 +1,65 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2026-4-117 -p alvis
+#SBATCH -A naiss2026-4-1354-gpu
+#SBATCH -p gpu
+#SBATCH --gpus 1
+#SBATCH -n 1
+#SBATCH -N 1
+#SBATCH --chdir=.
 #SBATCH -t 00:50:00
-#SBATCH --ntasks=1
-#SBATCH --gpus-per-node=A40:1
-#SBATCH --job-name=PAMAP2_3
-#SBATCH --array=1-4
+#SBATCH -J tfcc_5fold_PAMAP2_3
+#SBATCH -a 1-4
 #SBATCH --output=logs_3modality/PAMAP2_3_new10seeds/10seeds_baseline_PAMAP2_3_%A_%a.out
 
-module purge
-module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
-module load scikit-learn/1.4.2-gfbf-2023a
-module load einops/0.7.0-GCCcore-12.3.0
-module load matplotlib/3.7.2-gfbf-2023a
+module --quiet purge
 
-# python -m venv wandb_venv
-source wandb_venv/bin/activate
-# pip install wandb
+PROJECT=/nobackup/proj/disk/naiss2025-22-1224/shared/AAAI2027/AAAI2027
+IMAGE="$PROJECT/containers/alvis-reconstruction/experiment-arm64.sif"
+WORKDIR="$PROJECT"
+
+if [[ ! -r "$IMAGE" ]]; then
+    echo "Container image is missing or unreadable: $IMAGE" >&2
+    exit 1
+fi
+cd "$WORKDIR" || exit 1
+
+# Retain Slurm's GPU assignment inside the clean container environment.
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    export APPTAINERENV_CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE_DEVICES"
+fi
+export APPTAINERENV_PYTHONPATH="$PROJECT"
+
+CONTAINER_ARGS=(
+    --cleanenv
+    --nv
+    --bind /nobackup/proj
+    # Support Python entry points that still contain the original dataset paths.
+    --bind "/nobackup/proj/disk/naiss2025-22-1224/shared:/mimer/NOBACKUP/groups/naiss2025-22-1224"
+    --bind "$PROJECT:/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027"
+    --pwd "$WORKDIR"
+)
 
 export CUDA_LAUNCH_BLOCKING=1
+export APPTAINERENV_CUDA_LAUNCH_BLOCKING="$CUDA_LAUNCH_BLOCKING"
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
+export APPTAINERENV_TORCH_DISTRIBUTED_DEBUG="$TORCH_DISTRIBUTED_DEBUG"
 export PYTHONUNBUFFERED=1
+export APPTAINERENV_PYTHONUNBUFFERED="$PYTHONUNBUFFERED"
 
 echo ${CUDA_VISIBLE_DEVICES}
 echo "Running on node: $SLURMD_NODENAME"
 
 export WANDB_API_KEY='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'
+export APPTAINERENV_WANDB_API_KEY="$WANDB_API_KEY"
 
 
-export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:$PYTHONPATH"
+export PYTHONPATH="/nobackup/proj/disk/naiss2025-22-1224/shared/AAAI2027/AAAI2027:${PYTHONPATH:-}"
+export APPTAINERENV_PYTHONPATH="$PYTHONPATH"
 
-# cd /cephyr/users/mengyuh/Alvis/ComparativeStudy/Codes/Codes/Collection
-cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 # mkdir -p $TMPDIR/TFCC_multimodal
 # For Testing:
 # Disabled: --use_intra_sample_for_temporal_filter is obsolete; temporal filter uses temporal classifiers and priors.
+srun apptainer exec "${CONTAINER_ARGS[@]}" "$IMAGE" \
 python -u main_5fold.py \
     --dataset_name PAMAP2_3 \
     --current_num_fold ${SLURM_ARRAY_TASK_ID} \

@@ -339,23 +339,26 @@ if __name__ == '__main__':
     print("fn_analysis_threshold:", opt.fn_analysis_threshold)
     print("log_component_timing:", opt.log_component_timing)
 
-    if opt.dataset_name == 'SleepEDFx_3' or opt.dataset_name == 'PAMAP2_3':
-        print("Using 3-modality input for dataset:", opt.dataset_name)
-        # seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
-        # seeds = [0, 20, 42, 60, 80]
-        # seeds = [0, 1, 2, 3, 4]
-        seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
-        seeds = seeds[10:]
-    else:
-        seeds = [0, 20, 40, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        # seeds = opt.seeds  # use 3 seeds
-        # seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9]
-        # seeds = [0, 20, 42, 60, 66, 80, 100, 88]
-        seeds = seeds[12:]
-        if isinstance(seeds, int):
-            seeds = [seeds]
-        # seeds = seeds[:5]  # use first 5 seeds
-    print(seeds)
+    seeds = opt.seeds  # use 3 seeds
+
+    ###### Keep the following part for reference, previous setup for using several seeds
+    # if opt.dataset_name == 'SleepEDFx_3' or opt.dataset_name == 'PAMAP2_3':
+    #     print("Using 3-modality input for dataset:", opt.dataset_name)
+    #     # seeds = [0, 20, 42, 60, 80, 100, 120, 140, 160, 180]
+    #     # seeds = [0, 20, 42, 60, 80]
+    #     # seeds = [0, 1, 2, 3, 4]
+    #     seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    #     seeds = seeds[10:]
+    # else:
+    #     seeds = [0, 20, 40, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    #     # seeds = opt.seeds  # use 3 seeds
+    #     # seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8 ,9]
+    #     # seeds = [0, 20, 42, 60, 66, 80, 100, 88]
+    #     seeds = seeds[12:]
+    #     if isinstance(seeds, int):
+    #         seeds = [seeds]
+    #     # seeds = seeds[:5]  # use first 5 seeds
+    # print(seeds)
 
     ssl = opt.ssl
     if not ssl:
@@ -372,10 +375,10 @@ if __name__ == '__main__':
     if loader_dataset_name == 'SleepEDFx':
         if dataset_name == 'SleepEDFx_3':
             print("Using 3-modality input for SleepEDFx, which includes EEG, EOG and EMG.")
-            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/SleepEDFx/SleepTelemetry_preprocessed'
+            dataset_path = '/nobackup/proj/disk/naiss2025-22-1224/shared/SleepEDFx/SleepTelemetry_preprocessed'
             mod1_dims, mod2_dims, mod3_dims = 2, 1, 1
         else:
-            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/datasets_subject-wise/SleepEDFx/SleepCassette'
+            dataset_path = '/nobackup/proj/disk/naiss2025-22-1224/shared/datasets_subject-wise/SleepEDFx/SleepCassette'
             mod1_dims, mod2_dims = 2, 1
         n_classes = 5
         time_steps = 50
@@ -383,19 +386,19 @@ if __name__ == '__main__':
     elif loader_dataset_name == 'PAMAP2':
         if dataset_name == 'PAMAP2_3':
             print("Using 3-modality input for PAMAP2, which includes IMU on hand, IMU on chest and IMU on ankle.")
-            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_processed_3modality'
+            dataset_path = '/nobackup/proj/disk/naiss2025-22-1224/shared/PAMAP2_processed_3modality'
             mod1_dims, mod2_dims, mod3_dims = 9, 9, 9
         else:
-            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/PAMAP2_256_overlap128_normalized_9classes'
+            dataset_path = '/nobackup/proj/disk/naiss2025-22-1224/shared/PAMAP2_256_overlap128_normalized_9classes'
             mod1_dims, mod2_dims = 9, 9
         n_classes = 9
         time_steps = 5 #1
         print("n_classes:", n_classes, "input_dims", [dim for dim in [mod1_dims, mod2_dims, mod3_dims] if dim is not None], "time_steps", time_steps)
     elif loader_dataset_name in ['UCI-HAR', 'UCI-HAR_total']:
         if dataset_name == 'UCI-HAR_total':
-            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/UCI-HAR_total'
+            dataset_path = '/nobackup/proj/disk/naiss2025-22-1224/shared/UCI-HAR_total'
         else:
-            dataset_path = '/mimer/NOBACKUP/groups/naiss2025-22-1224/UCI-HAR'
+            dataset_path = '/nobackup/proj/disk/naiss2025-22-1224/shared/UCI-HAR'
         n_classes = 6
         mod1_dims = 3
         mod2_dims = 3

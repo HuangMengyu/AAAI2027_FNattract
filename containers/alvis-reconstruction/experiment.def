@@ -1,0 +1,103 @@
+Bootstrap: docker
+From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+
+%labels
+    Purpose Alvis-version reconstruction for single-node Arrhenius experiments
+    Status Draft; ARM build and GPU validation required
+    Python 3.11.3
+    PyTorch 2.1.2
+    CUDA 12.1.1
+
+%files
+    requirements-runtime.txt /opt/reconstruction/requirements-runtime.txt
+    smoke_gpu.py /opt/reconstruction/smoke_gpu.py
+
+%post
+    set -eu
+    test "$(uname -m)" = aarch64
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        build-essential gcc-11 g++-11 gfortran git curl ca-certificates \
+        pkg-config libopenblas-dev libssl-dev zlib1g-dev libbz2-dev \
+        libreadline-dev libsqlite3-dev libffi-dev liblzma-dev uuid-dev
+
+    # Pin cuDNN explicitly; the original cuDNN version is still unknown.
+    apt-get install -y --no-install-recommends --allow-change-held-packages \
+        libcudnn8=8.9.2.26-1+cuda12.1 \
+        libcudnn8-dev=8.9.2.26-1+cuda12.1
+    ldconfig
+
+    # Python 3.11.3 is inferred from the original 2023a toolchain.
+    mkdir -p /opt/reconstruction/wheels /opt/build
+    cd /opt/build
+    curl -fL --retry 3 https://www.python.org/ftp/python/3.11.3/Python-3.11.3.tgz -o Python.tgz
+    sha256sum Python.tgz > /opt/reconstruction/python-source.sha256
+    tar -xzf Python.tgz
+    cd Python-3.11.3
+    ./configure --prefix=/opt/python --with-ensurepip=install
+    make -j4
+    make install
+    /opt/python/bin/python3.11 -m venv /opt/venv
+    export PATH=/opt/venv/bin:/usr/local/cuda/bin:$PATH
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu
+
+    python -m pip install pip==23.1.2 setuptools==67.7.2 wheel==0.40.0
+    # These are build-tool choices, rather than recovered Alvis dependencies.
+    python -m pip install cmake==3.27.6 ninja==1.11.1.1 astunparse==1.6.3
+    # psutil 5.9.5 has no matching ARM wheel; compile it without changing its pin.
+    python -m pip install --only-binary=:all: --no-binary=psutil \
+        --no-build-isolation -r /opt/reconstruction/requirements-runtime.txt
+
+    cd /opt/build
+    git clone --branch v2.1.2 --depth 1 https://github.com/pytorch/pytorch.git
+    cd pytorch
+    git submodule update --init --recursive
+    git rev-parse HEAD > /opt/reconstruction/pytorch-commit.txt
+    git submodule status --recursive > /opt/reconstruction/pytorch-submodules.txt
+
+    export CC=gcc-11
+    export CXX=g++-11
+    export CUDACXX=/usr/local/cuda/bin/nvcc
+    export CUDAHOSTCXX=g++-11
+    export CMAKE_PREFIX_PATH=/opt/venv
+    export PYTORCH_BUILD_VERSION=2.1.2
+    export PYTORCH_BUILD_NUMBER=1
+    export TORCH_CUDA_ARCH_LIST=9.0
+    export MAX_JOBS=8
+    export USE_CUDA=1
+    export USE_CUDNN=1
+    export USE_NCCL=1
+    export USE_SYSTEM_NCCL=0
+    export USE_DISTRIBUTED=1
+    export BLAS=OpenBLAS
+    # Avoid the x86-oriented CPU backend; this changes CPU build features.
+    export USE_MKLDNN=0
+    python -m pip wheel --no-deps --no-build-isolation \
+        --wheel-dir /opt/reconstruction/wheels .
+    python -m pip install --no-deps /opt/reconstruction/wheels/torch-*.whl
+
+    # Run outside the source tree so imports exercise the installed wheel.
+    cd /opt/reconstruction
+    python -m pip check
+    python -c 'import torch; assert torch.__version__ == "2.1.2"; assert torch.version.cuda == "12.1"; assert torch.backends.cudnn.is_available(); print(torch.__config__.show())' > torch-build-config.txt
+    python -m pip freeze --all > requirements-installed.txt
+    dpkg-query -W > system-packages.txt
+    nvcc --version > cuda-toolkit.txt
+    sha256sum wheels/*.whl > wheel-checksums.txt
+    # Build trees are temporary image contents, not project files.
+    rm -rf /opt/build
+    apt-get clean
+
+%environment
+    export PATH=/opt/venv/bin:/usr/local/cuda/bin:$PATH
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}
+    export PYTHONNOUSERSITE=1
+
+%test
+    /opt/venv/bin/python -c 'import torch, numpy, scipy, sklearn, einops, matplotlib, pandas; assert torch.__version__ == "2.1.2"; assert torch.version.cuda == "12.1"'
+
+%runscript
+    exec /opt/venv/bin/python "$@"

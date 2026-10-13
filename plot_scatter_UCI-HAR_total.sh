@@ -1,30 +1,59 @@
 #!/usr/bin/env bash
-#SBATCH -A NAISS2025-22-1224 -p alvis
+#SBATCH -A naiss2026-4-1354-gpu
+#SBATCH -p gpu
+#SBATCH --gpus 1
+#SBATCH -n 1
+#SBATCH -N 1
+#SBATCH --chdir=.
 #SBATCH -t 00:30:00
-#SBATCH --ntasks=1
-#SBATCH --gpus-per-node=A40:1
 #SBATCH --job-name=plot_scatter_UCI-HAR_total
 #SBATCH --array=1-5
 #SBATCH --output=logs_plot_scatter/UCI-HAR_total_%A_%a.out
 
+module --quiet purge
+
+PROJECT=/nobackup/proj/disk/naiss2025-22-1224/shared/AAAI2027/AAAI2027
+IMAGE="$PROJECT/containers/alvis-reconstruction/experiment-arm64.sif"
+WORKDIR="$PROJECT"
+
+if [[ ! -r "$IMAGE" ]]; then
+    echo "Container image is missing or unreadable: $IMAGE" >&2
+    exit 1
+fi
+cd "$WORKDIR" || exit 1
+
+# Retain Slurm's GPU assignment inside the clean container environment.
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    export APPTAINERENV_CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE_DEVICES"
+fi
+export APPTAINERENV_PYTHONPATH="$PROJECT"
+
+CONTAINER_ARGS=(
+    --cleanenv
+    --nv
+    --bind /nobackup/proj
+    # Support Python entry points that still contain the original dataset paths.
+    --bind "/nobackup/proj/disk/naiss2025-22-1224/shared:/mimer/NOBACKUP/groups/naiss2025-22-1224"
+    --bind "$PROJECT:/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027"
+    --pwd "$WORKDIR"
+)
+
 set -euo pipefail
 
-module purge
-module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
-module load scikit-learn/1.4.2-gfbf-2023a
-module load einops/0.7.0-GCCcore-12.3.0
-module load matplotlib/3.7.2-gfbf-2023a
 
 
 export CUDA_LAUNCH_BLOCKING=1
+export APPTAINERENV_CUDA_LAUNCH_BLOCKING="$CUDA_LAUNCH_BLOCKING"
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
+export APPTAINERENV_TORCH_DISTRIBUTED_DEBUG="$TORCH_DISTRIBUTED_DEBUG"
 export PYTHONUNBUFFERED=1
-export PYTHONPATH="/mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027:${PYTHONPATH:-}"
+export APPTAINERENV_PYTHONUNBUFFERED="$PYTHONUNBUFFERED"
+export PYTHONPATH="/nobackup/proj/disk/naiss2025-22-1224/shared/AAAI2027/AAAI2027:${PYTHONPATH:-}"
+export APPTAINERENV_PYTHONPATH="$PYTHONPATH"
 
 echo "${CUDA_VISIBLE_DEVICES:-}"
 echo "Running on node: ${SLURMD_NODENAME:-unknown}"
 
-cd /mimer/NOBACKUP/groups/naiss2025-22-1224/AAAI2027
 
 SEED="${SEED:-0}"
 MAX_BATCHES="${MAX_BATCHES:-}"
@@ -39,6 +68,7 @@ if [[ -n "${MAX_PLOT_PAIRS}" ]]; then
     extra_args+=(--max_plot_pairs "${MAX_PLOT_PAIRS}")
 fi
 
+srun apptainer exec "${CONTAINER_ARGS[@]}" "$IMAGE" \
 python -u scripts/plot_binary_gmm_pair_scatter.py \
     --dataset_name UCI-HAR_total \
     --current_num_fold "${SLURM_ARRAY_TASK_ID}" \
